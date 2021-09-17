@@ -1,3 +1,4 @@
+scrapes/
 core
 human-eval
 hf_cache

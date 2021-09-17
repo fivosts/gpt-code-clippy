@@ -167,21 +167,21 @@ def get_content(f):
             return
     except KeyboardInterrupt:
         sys.exit()
-    except FileNotFoundError:
+    except FileNotFoundError as e:
         # bad symlink
         import os.path
         if not os.path.islink(f):
             # something went horribly wrong!
             ...
 
-def filter_criteria(files):
-    filtered_files = []
-    for f in files:
-        size = os.path.getsize(f)
-        if '.git' not in f and f[0] is not '.' and \
-            'LICENSE' not in f and 'node_modules' not in f and \
-            '.min.' not in f and f.split('.')[-1] not in bad_extensions and \
-            f.split('.')[-1] in lang_exts and size
+# def filter_criteria(files):
+#     filtered_files = []
+#     for f in files:
+#         size = os.path.getsize(f)
+#         if '.git' not in f and f[0] is not '.' and \
+#             'LICENSE' not in f and 'node_modules' not in f and \
+#             '.min.' not in f and f.split('.')[-1] not in bad_extensions and \
+#             f.split('.')[-1] in lang_exts and size
 
 def _process_repo(repo_data, repodir):
     out = None
@@ -190,41 +190,44 @@ def _process_repo(repo_data, repodir):
     meta = {'repo_name': name, 'stars': stars, 'repo_language': lang, 'license': licen}
     try:
         for curdir, dirs, files in os.walk(repodir):
-            import os
-            size = os.path.getsize('C:\\Python27\\Lib\\genericpath.py')
-
-            files = [curdir + '/' + f for f in files if '.git' not in f and f[
-                0] is not '.' and 'LICENSE' not in f and 'node_modules' not in f and '.min.' not in f and f.split('.')[
-                         -1] not in bad_extensions and f.split('.')[
-                         -1] in lang_exts and os.path.getsize('C:\\Python27\\Lib\\genericpath.py')]
-
-            filenames = [f.split("/")[-1] for f in files]
+            # size = os.path.getsize('C:\\Python27\\Lib\\genericpath.py')
+            filenames = []
             extensions = []
-            for f in files:
-                try:
-                    extensions.append(mime.from_file(f))
-                except FileNotFoundError:
-                    extensions.append("n/a")
             text_outputs = []
-            for f in files:
+            for short_file_path in files:
+                full_file_path = os.path.join(curdir, short_file_path)
+                split_ext = os.path.splitext(short_file_path)
+                if len(split_ext) < 2:
+                    continue
+                extension = split_ext[-1]
+                if extension not in lang_exts or extension in bad_extensions:
+                    continue
+                if '.git' in short_file_path or short_file_path[0] == '.' or 'LICENSE' in short_file_path or 'node_modules' in short_file_path or '.min.' in short_file_path:
+                    continue
+
                 try:
-                    text_outputs.append(get_content(f))
+                    mime_type = mime.from_file(full_file_path)
+                except FileNotFoundError:
+                    mime_type = "n/a"
+
+                try:
+                    text = get_content(full_file_path)
                 except TimeoutError:
                     raise TimeoutError
                 except:
-                    text_outputs.append(None)
-            for i in range(len(files)):
-                text = text_outputs[i]
-                if text is not None:
-                    meta['file_name'] = filenames[i]
-                    meta['mime_type'] = extensions[i]
+                    text = None
+
+                if text is not None and text.strip():
+                    meta_updated = dict(file_name=short_file_path, mime_type=mime_type, **meta)
                     if out is None:
-                        out = [[text, meta]]
+                        out = [[text, meta_updated]]
                     else:
-                        out.append([text, meta])
+                        out.append([text, meta_updated])
         shutil.rmtree(repodir, ignore_errors=True)
     except TimeoutError:
         print(f"Processing for {name} timed out")
+    except Exception as e:
+        print(e)
     return out
 
 
@@ -235,13 +238,19 @@ def process_repo(repo_data, repodir, processing_timeout):
 def process_repo_list(repo_data, clone_timeout, processing_timeout):
     out = None
     try:
-        name, stars, lang = repo_data
-        repodir = f'./.tmp/{name.split("/")[-1]}'
+        name, stars, lang, license = repo_data
+        username, projectname = name.split("/")
+        rootfolder = os.path.join(".tmp", username)
+        os.makedirs(rootfolder, exist_ok=True)
+        repodir = os.path.join(rootfolder, projectname)
         # clones master branch of repos with depth 1 (most recent commit only), ignoring any terminal prompts
+        git_command = f'GIT_TERMINAL_PROMPT=0 git clone --depth 1 --single-branch https://github.com/{name} {projectname}'
         p = subprocess.Popen(
-            f'GIT_TERMINAL_PROMPT=0 git clone --depth 1 --single-branch https://github.com/{name} {repodir}',
+            git_command,
             shell=True,
-            stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+            cwd=os.path.join(os.getcwd(), rootfolder),
+            stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT,
+        )
         try:
             p.wait(clone_timeout)
         except subprocess.TimeoutExpired:
@@ -250,18 +259,20 @@ def process_repo_list(repo_data, clone_timeout, processing_timeout):
         shutil.rmtree(f'{repodir}/.git', ignore_errors=True)
         # extracts text files from repo and returns them as list : [[text, metadata], ... ]
         out = process_repo(repo_data, repodir, processing_timeout=processing_timeout)
-    except Exception:
-        err = traceback.format_exc()
-        if verbose:
-            print(err)
+    except Exception as e:
+        print(e)
+        # if verbose:
+        #     print(e)
     return out
 
 
 def process_args():
     parser = argparse.ArgumentParser(
         description='CLI for github downloader - A tool for scraping repos as text from github')
-    parser.add_argument('--n_threads', help='number of threads for parallel processing, defaults to cpu_count',
-                        default=-1,
+    parser.add_argument('input_csv')
+    parser.add_argument('output_dir')
+    parser.add_argument('--n_threads', help='number of threads for parallel processing, -1 for cpu_count',
+                        default=10,
                         type=int)
     parser.add_argument('--n_stars', help='filter repos with less than n_stars stars',
                         default=-1,
@@ -287,16 +298,24 @@ if __name__ == '__main__':
     args = process_args()  # parse args
     verbose = args.verbose
 
+    # read repo data to a tuple (reponame, n_stars, language, license)
+    with open(args.input_csv, 'r') as f:
+        csv_reader = csv.reader(f)
+        row = next(csv_reader)
+        assert tuple(row) == ('name', 'stargazers', 'main_language', 'license')
+        repo_data = list(map(tuple, csv_reader))
+
+    if not os.path.isdir(args.output_dir):
+        raise Exception("output directory {args.output_dir} does not exist; exiting")
+
+    print(args.output_dir)
+    os.chdir(args.output_dir)
+
     # make output dirs
     if '.tmp' not in os.listdir():
         os.makedirs('.tmp')
     if 'github_data' not in os.listdir():
         os.makedirs('github_data')
-
-    # read repo data to a tuple (reponame, n_stars, language)
-    with open('github_repositories.csv', 'r') as f:
-        csv_reader = csv.reader(f)
-        repo_data = list(map(tuple, csv_reader))
 
     # filter by number of stars
     if args.n_stars != -1:
@@ -316,7 +335,7 @@ if __name__ == '__main__':
     archive_name = 'github_data'
     ar = lmd.Archive(archive_name)
     pool = Pool(n_threads)
-    pbar = tqdm(repo_chunks, total=len(repo_chunks))
+    pbar = tqdm(repo_chunks, total=len(repo_chunks), ncols=80)
     success_hist = []
     for count, chunk in enumerate(pbar):
         repos_out = pool.starmap(process_repo_list,

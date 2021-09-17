@@ -7,7 +7,8 @@ from pathlib import Path
 
 def convert_to_gh_downloader(df, path):
     # select only name, stargazers, and languages columns and save to path
-    df = df[["name", "stargazers", "languages"]]
+    # df = df[["Name", "Stargazers", "Languages"]]
+    df = df[["name", "stargazers", "main_language"]]
     df.to_csv(path / "github_repositories.csv", index=False, header=False)
 
 
