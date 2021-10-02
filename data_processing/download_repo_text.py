@@ -72,7 +72,7 @@ bad_extensions = [
     'zst'
 ]
 # load programming language extensions from json file
-with open("./Programming_Languages_Extensions.json", "r") as f:
+with open("./Programming_Languages_Extensions_filtered.json", "r") as f:
     data = json.load(f)
 
 lang_exts = []
@@ -271,7 +271,7 @@ def process_args():
         description='CLI for github downloader - A tool for scraping repos as text from github')
     parser.add_argument('input_csv')
     parser.add_argument('output_dir')
-    parser.add_argument('--n_threads', help='number of threads for parallel processing, -1 for cpu_count',
+    parser.add_argument('--n_threads', help='number of threads for parallel processing, -1 for cpu_count * 3',
                         default=10,
                         type=int)
     parser.add_argument('--n_stars', help='filter repos with less than n_stars stars',
@@ -346,7 +346,10 @@ if __name__ == '__main__':
             if repo is not None:
                 not_none += 1
                 for f in repo:
-                    ar.add_data(f[0], meta=f[1])
+                    try:
+                        ar.add_data(f[0], meta=f[1])
+                    except UnicodeEncodeError as e:
+                        continue
             else:
                 none += 1
 

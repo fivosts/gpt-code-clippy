@@ -11,7 +11,7 @@ for shard in ${REPO_SHARDS}; do
     # cp Programming_Languages_Extensions.json $OUT_DIR
     # cd $OUT_DIR
     # python download_repo_text.py --verbose
-    python download_repo_text.py $shard $OUT_DIR --verbose
+    python download_repo_text.py $shard $OUT_DIR --verbose --n_threads 80
     mv $OUT_DIR/"github_data" $OUT_DIR/"github_data_${ID}"
     # cd -
     echo "Finished processsing data from ${shard}"

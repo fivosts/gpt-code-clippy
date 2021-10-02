@@ -57,6 +57,22 @@ _URLs = {
 }
 
 
+class CodeClippyConfig(datasets.BuilderConfig):
+    """BuilderConfig for CodeClippy."""
+
+    def __init__(self, language_filter_type=None, licenses_filter=None, **kwargs):
+        """BuilderConfig for CodeClippy.
+        Args:
+          **kwargs: keyword arguments forwarded to super.
+        """
+        super(CodeClippyConfig, self).__init__(**kwargs)
+
+        self.language_filter_type = language_filter_type
+        if self.language_filter_type not in ('guesslang', 'repo_language', 'filename_extension'):
+            raise NotImplementedError(f"invalid language_filter_type {self.language_filter_type}")
+
+        self.licenses_filter = licenses_filter
+
 class CodeClippy(datasets.GeneratorBasedBuilder):
     """CodeClippy dataset - opensource code from Github. Scrapped July 7 2021."""
 
@@ -90,6 +106,7 @@ class CodeClippy(datasets.GeneratorBasedBuilder):
                 "repo_language": datasets.Value("string"),
                 "file_name": datasets.Value("string"),
                 "mime_type": datasets.Value("string"),
+                "license": datasets.Value("string"),
             }
         )
         return datasets.DatasetInfo(
