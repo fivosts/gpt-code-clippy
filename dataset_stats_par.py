@@ -26,8 +26,8 @@ class Worker(Process):
 
     def run(self):
         #print(f"worker {self.index} starting")
-        # guess = Guess()
-        guess = None
+        guess = Guess()
+        # guess = None
         tokenizer = GPT2TokenizerFast.from_pretrained("gpt2", add_prefix_space=ADD_PREFIX_SPACE)
 
         while True:
@@ -51,8 +51,8 @@ class Worker(Process):
             filename_ext = fname_toks[-1]
         else:
             filename_ext = None
-        #guessed_lang = guess.language_name(x['text'])
-        guessed_lang = None
+        guessed_lang = guess.language_name(x['text'])
+        #guessed_lang = None
 
         tokens = tokenizer(x['text'])['input_ids']
         token_count = len(tokens)
