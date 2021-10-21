@@ -23,6 +23,7 @@ class GPTClippyData(datasets.GeneratorBasedBuilder):
                     "repo_language": datasets.Value("string"),
                     "mime_type": datasets.Value("string"),
                     "stars": datasets.Value("int32"),
+                    "license": datasets.Value("string"),
                 }
             )
         )

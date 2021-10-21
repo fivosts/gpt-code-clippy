@@ -13,18 +13,21 @@ dataset = datasets.load_dataset("script.py", data_dir=args.data_dir, split="trai
 
 print(f"n examples before deduplication: {len(dataset)}")
 
+unique_variables = set()
 
 def get_variables(examples):
     """Convert a code string to a list of variables.
     We assume a variable is a 'word' with only alphanumeric characters in it."""
     variables = [" ".join(re.split(r"\W+", text)) for text in examples["text"]]
+    for v in variables:
+        unique_variables.add(v)
     return {"variables": variables}
 
 
 dataset = dataset.map(get_variables, batched=True)
 
-uniques = set(dataset.unique("variables"))
-n_uniques = len(uniques)
+#unique_variables = set(dataset.unique("variables"))
+n_uniques = len(unique_variables)
 
 print(f"found {n_uniques} unique files")
 
@@ -38,7 +41,7 @@ def check_uniques(example, uniques):
         return False
 
 
-deduplicated_dataset = dataset.filter(check_uniques, fn_kwargs={"uniques": uniques})
+deduplicated_dataset = dataset.filter(check_uniques, fn_kwargs={"uniques": unique_variables})
 
 assert len(deduplicated_dataset) == n_uniques
 

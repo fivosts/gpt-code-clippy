@@ -102,7 +102,7 @@ class CodeClippy(datasets.GeneratorBasedBuilder):
                 "id": datasets.Value("int64"),
                 "text": datasets.Value("string"),
                 "repo_name": datasets.Value("string"),
-                "stars": datasets.Value("string"),
+                "stars": datasets.Value("int32"),
                 "repo_language": datasets.Value("string"),
                 "file_name": datasets.Value("string"),
                 "mime_type": datasets.Value("string"),
@@ -169,38 +169,50 @@ class CodeClippy(datasets.GeneratorBasedBuilder):
             ".rb",
         }
         data_dir = self.config.data_dir
-        return [
-            datasets.SplitGenerator(
+        return [datasets.SplitGenerator(
                 name=datasets.Split.TRAIN,
                 gen_kwargs={
                     "filepaths": sorted(
                         [
                             str(fp)
-                            for fp in Path(f"{data_dir}/train").glob("*.jsonl.zst")
-                        ]
-                    )
-                },
-            ),
-            datasets.SplitGenerator(
-                name=datasets.Split.TEST,
-                gen_kwargs={
-                    "filepaths": sorted(
-                        [str(fp) for fp in Path(f"{data_dir}/test").glob("*.jsonl.zst")]
-                    )
-                },
-            ),
-            datasets.SplitGenerator(
-                name=datasets.Split.VALIDATION,
-                gen_kwargs={
-                    "filepaths": sorted(
-                        [
-                            str(fp)
-                            for fp in Path(f"{data_dir}/validation").glob("*.jsonl.zst")
+                            for fp in Path(f"{data_dir}/").glob("*.jsonl.zst")
                         ]
                     )
                 },
             ),
         ]
+        # return [
+        #     datasets.SplitGenerator(
+        #         name=datasets.Split.TRAIN,
+        #         gen_kwargs={
+        #             "filepaths": sorted(
+        #                 [
+        #                     str(fp)
+        #                     for fp in Path(f"{data_dir}/train").glob("*.jsonl.zst")
+        #                 ]
+        #             )
+        #         },
+        #     ),
+        #     datasets.SplitGenerator(
+        #         name=datasets.Split.TEST,
+        #         gen_kwargs={
+        #             "filepaths": sorted(
+        #                 [str(fp) for fp in Path(f"{data_dir}/test").glob("*.jsonl.zst")]
+        #             )
+        #         },
+        #     ),
+        #     datasets.SplitGenerator(
+        #         name=datasets.Split.VALIDATION,
+        #         gen_kwargs={
+        #             "filepaths": sorted(
+        #                 [
+        #                     str(fp)
+        #                     for fp in Path(f"{data_dir}/validation").glob("*.jsonl.zst")
+        #                 ]
+        #             )
+        #         },
+        #     ),
+        # ]
 
     def _generate_examples(self, filepaths: List):
         """Yields examples as (key, example) tuples."""
