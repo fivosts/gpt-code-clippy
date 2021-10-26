@@ -24,5 +24,5 @@ if __name__ == "__main__":
             if random.random() <= YIELD_RATE:
                 yield x['text']
 
-    tokenizer.train_from_iterator(data_gen(), vocab_size=50257)
+    tokenizer.train_from_iterator(data_gen(), vocab_size=50257, special_tokens=["<|endoftext|>", "<|pad|>"])
     tokenizer.save_model(tokenizer_dir)

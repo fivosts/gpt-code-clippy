@@ -271,6 +271,8 @@ def process_args():
         description='CLI for github downloader - A tool for scraping repos as text from github')
     parser.add_argument('input_csv')
     parser.add_argument('output_dir')
+    parser.add_argument('--already_scraped_input', help='path to file containing names of already scraped repos (to read from)')
+    parser.add_argument('--already_scraped_output', help='path to file containing names of already scraped repos (to write to)')
     parser.add_argument('--n_threads', help='number of threads for parallel processing, -1 for cpu_count * 3',
                         default=10,
                         type=int)
@@ -305,8 +307,21 @@ if __name__ == '__main__':
         assert tuple(row) == ('name', 'stargazers', 'main_language', 'license')
         repo_data = list(map(tuple, csv_reader))
 
+        # possibly filter out repos from the file in --already_scraped_input
+        if args.already_scraped_input is not None:
+            with open(args.already_scraped_input, 'r') as f:
+                already_scraped = set(l.strip() for l in f.readlines())
+            repo_data_filtered = [t for t in repo_data if t[0] not in already_scraped]
+            print(f"skipping {len(repo_data) - len(repo_data_filtered)} repos from {args.already_scraped_input}")
+            repo_data = repo_data_filtered
+
     if not os.path.isdir(args.output_dir):
         raise Exception("output directory {args.output_dir} does not exist; exiting")
+
+    if args.already_scraped_output is not None:
+        already_scraped_output_file = open(args.already_scraped_output, 'a', buffering=1)
+    else:
+        already_scraped_output_file = None
 
     print(args.output_dir)
     os.chdir(args.output_dir)
@@ -350,6 +365,8 @@ if __name__ == '__main__':
                         ar.add_data(f[0], meta=f[1])
                     except UnicodeEncodeError as e:
                         continue
+                if already_scraped_output_file is not None:
+                    already_scraped_output_file.write(f[1]["repo_name"]+"\n")
             else:
                 none += 1
 
@@ -361,3 +378,5 @@ if __name__ == '__main__':
         success_rate = sum(success_hist) / len(success_hist)
         pbar.set_postfix({"Success Rate": success_rate})
     ar.commit() # final commit
+    if already_scraped_output_file is not None:
+        already_scraped_output_file.close()
