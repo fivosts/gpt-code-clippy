@@ -133,9 +133,11 @@ def get_content(f):
 #             f.split('.')[-1] in lang_exts and size
 
 def detect_licenses(repodir):
-    result = subprocess.run(f"licensee detect --json {repodir}", shell=True, stdout=subprocess.STDOUT, stderr=subprocess.STDERR)
+    result = subprocess.run(f"licensee detect --json {repodir}", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
-        license_data = json.loads(result)
+        license_data = json.loads(result.stdout)
+        if result.stderr is not None and result.stderr.strip():
+            print(result.stderr.strip())
         return [d['meta']['title'] for d in license_data['licenses']]
     except Exception as e:
         print(e, file=sys.stderr)
@@ -145,7 +147,7 @@ def remove_prefix(string, prefix):
     assert string.startswith(prefix)
     return string[len(prefix):]
 
-def _process_repo(repo_data, repodir, license_filter):
+def _process_repo(repo_data, repodir, license_filter, license_counter=None):
     out = None
     # get metadata
     meta = repo_data.copy()
@@ -163,7 +165,7 @@ def _process_repo(repo_data, repodir, license_filter):
         if license_filter is not None:
             # ensure this repo has a license and all licenses are within the filter
             if not licenses or any(license not in license_filter for license in licenses):
-                return None
+                return None, meta
         for curdir, dirs, files in os.walk(repodir):
             # size = os.path.getsize('C:\\Python27\\Lib\\genericpath.py')
             filenames = []
@@ -204,11 +206,12 @@ def _process_repo(repo_data, repodir, license_filter):
         print(f"Processing for {name} timed out")
     except Exception as e:
         print(e)
-    return out
+    return out, meta
 
 
 def process_repo_list(repo_data, clone_timeout, processing_timeout, source='github', license_filter=None):
     out = None
+    meta = repo_data
     try:
         name = repo_data['name']
         lang = repo_data['main_language']
@@ -240,12 +243,12 @@ def process_repo_list(repo_data, clone_timeout, processing_timeout, source='gith
             p.kill()
         shutil.rmtree(f'{repodir}/.git', ignore_errors=True)
         # extracts text files from repo and returns them as list : [[text, metadata], ... ]
-        out = timeout(_process_repo, args=(repo_data, repodir, license_filter), timeout_duration=processing_timeout)
+        out, meta = timeout(_process_repo, args=(repo_data, repodir, license_filter), timeout_duration=processing_timeout)
     except Exception as e:
         print(e)
         # if verbose:
         #     print(e)
-    return out, repo_data
+    return out, meta
 
 
 def process_args():
@@ -272,6 +275,7 @@ def process_args():
                         default=10,
                         type=int)
     parser.add_argument('--source', choices=['github', 'gitlab', 'bitbucket'], default='github')
+    parser.add_argument('--language_filter')
     parser.add_argument('-v', '--verbose', help='if flag is present, print errors', action='store_true')
     parser.add_argument('--open_source_only', action='store_true')
     return parser.parse_args()
@@ -315,6 +319,10 @@ if __name__ == '__main__':
             if args.source == 'gitlab':
                 t['name'] = remove_prefix(t['url'], 'https://gitlab.com/')
 
+            if args.source == 'bitbucket':
+                t['main_language'] = t['language']
+                t['name'] = t['full_name']
+
             assert 'name' in t, f"csv keys {t.keys()} do not include 'name'"
             assert 'main_language' in t, f"csv keys {t.keys()} do not include 'main_language'"
 
@@ -326,6 +334,9 @@ if __name__ == '__main__':
                 continue
             if 'license' in t and license_filter is not None and t['license'] not in license_filter:
                 skipped['license'] += 1
+                continue
+            if args.language_filter is not None and t['language'] != args.language_filter:
+                skipped['language'] += 1
                 continue
             to_process.add(t['name'])
             repo_data_filtered.append(t)
@@ -368,6 +379,9 @@ if __name__ == '__main__':
     pbar = tqdm(repo_chunks, total=len(repo_chunks), ncols=80)
     success_hist = []
 
+    license_counter = Counter()
+
+    # TODO: also include language filter
     processing_function = functools.partial(
         process_repo_list, clone_timeout=args.clone_timeout, processing_timeout=args.processing_timeout,
         source=args.source, license_filter=license_filter,
@@ -378,16 +392,27 @@ if __name__ == '__main__':
         none = 0
         repos_out = pool.map(processing_function, chunk)
         for processed_files, repo_data in repos_out: 
+            if 'detected_licenses' in repo_data:
+                licenses = repo_data['detected_licenses']
+            elif 'license' in repo_data:
+                licenses = [repo_data['license']]
+            else:
+                licenses = []
+            if not licenses:
+                licenses = ['no-license']
+            license_counter.update(licenses)
+
+            processed_names.append(repo_data['name'])
             if processed_files is not None:
                 not_none += 1
                 for f in processed_files:
                     try:
                         ar.add_data(f[0], meta=f[1])
                     except UnicodeEncodeError as e:
+                        print(e)
                         continue
             else:
                 none += 1
-            processed_names.append(repo_data['name'])
 
         # remove any leftover files
         subprocess.Popen("rm -rfv .tmp && mkdir .tmp", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
@@ -397,9 +422,11 @@ if __name__ == '__main__':
                 already_scraped_output_file.write(name+"\n")
             already_scraped_output_file.flush()
             processed_names = []
-        success_hist.append((not_none / len(repos_out)) * 100)
+            tqdm.write(str(license_counter.most_common(20)))
+        this_success_rate = (not_none / len(repos_out)) * 100
+        success_hist.append(this_success_rate)
         success_rate = sum(success_hist) / len(success_hist)
-        pbar.set_postfix({"Success Rate": success_rate})
+        pbar.set_postfix({'overall_sr': success_rate, 'this_sr': this_success_rate})
     ar.commit() # final commit
     for name in processed_names:
         already_scraped_output_file.write(name+"\n")
