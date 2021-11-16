@@ -32,6 +32,8 @@ OPEN_SOURCE_LICENSES = {
     # licensee
     'BSD 3-Clause "New" or "Revised" License',
     'BSD 2-Clause "Simplified" License',
+    # Google Code
+    'mit', 'asf20', 'bsd',
 }
 
 LICENSE_STANDARDIZATION = {
@@ -147,12 +149,21 @@ def remove_prefix(string, prefix):
     assert string.startswith(prefix)
     return string[len(prefix):]
 
-def _process_repo(repo_data, repodir, license_filter, license_counter=None):
+def _process_repo(repo_data, repodir, license_filter, repo_type):
     out = None
     # get metadata
     meta = repo_data.copy()
     # for backward compatibility
     meta['repo_name'] = meta['name']
+
+    if repo_type == 'git':
+        exclude_list = ['.git']
+    elif repo_type == 'svn':
+        exclude_list = ['.svn', 'tags', 'branches']
+    elif repo_type == 'hg':
+        exclude_list = [".hg"]
+    else:
+        raise NotImplementedError(f"repo_type {repo_type}")
 
     #meta = {'repo_name': name, 'stars': stars, 'repo_language': lang, 'license': licen}
     try:
@@ -168,6 +179,7 @@ def _process_repo(repo_data, repodir, license_filter, license_counter=None):
                 return None, meta
         for curdir, dirs, files in os.walk(repodir):
             # size = os.path.getsize('C:\\Python27\\Lib\\genericpath.py')
+            dirs[:] = [d for d in dirs if d not in exclude_list]
             filenames = []
             extensions = []
             text_outputs = []
@@ -181,7 +193,6 @@ def _process_repo(repo_data, repodir, license_filter, license_counter=None):
                     continue
                 if '.git' in short_file_path or short_file_path[0] == '.' or 'LICENSE' in short_file_path or 'node_modules' in short_file_path or '.min.' in short_file_path:
                     continue
-
                 try:
                     mime_type = MIME.from_file(full_file_path)
                 except FileNotFoundError:
@@ -208,30 +219,43 @@ def _process_repo(repo_data, repodir, license_filter, license_counter=None):
         print(e)
     return out, meta
 
-
 def process_repo_list(repo_data, clone_timeout, processing_timeout, source='github', license_filter=None):
     out = None
     meta = repo_data
     try:
         name = repo_data['name']
-        lang = repo_data['main_language']
+        is_git = True
         if source == 'github':
             base_url = f'https://github.com/{name}'
         elif source == 'gitlab':
             base_url = f'https://gitlab.com/{name}.git'
         elif source == 'bitbucket':
             base_url = f'https://bitbucket.org/{name}.git'
+        elif source == 'google_code':
+            is_git = False
+            base_url = f"https://storage.googleapis.com/google-code-archive-source/v2/code.google.com/{name}/source-archive.zip"
         else:
             raise ValueError(f"invalid source {source}")
-        # gitlab allows this to have more than 2
-        username, projectname = name.split("/")[-2:]
-        rootfolder = os.path.join(".tmp", username)
+        if is_git:
+            # gitlab allows this to have more than 2
+            username, projectname = name.split("/")[-2:]
+            rootfolder = os.path.join(".tmp", username)
+            repodir = os.path.join(rootfolder, projectname)
+
+            command = f'GIT_TERMINAL_PROMPT=0 git clone --depth 1 --single-branch {base_url} {projectname}'
+
+            repo_type = 'git'
+        else:
+            rootfolder = os.path.join(".tmp", name)
+            repodir = os.path.join(rootfolder, name)
+
+            command = f'wget {base_url}; unzip source-archive.zip'
+
+            repo_type = repo_data['repoType']
         os.makedirs(rootfolder, exist_ok=True)
-        repodir = os.path.join(rootfolder, projectname)
         # clones master branch of repos with depth 1 (most recent commit only), ignoring any terminal prompts
-        git_command = f'GIT_TERMINAL_PROMPT=0 git clone --depth 1 --single-branch {base_url} {projectname}'
         p = subprocess.Popen(
-            git_command,
+            command,
             shell=True,
             cwd=os.path.join(os.getcwd(), rootfolder),
             stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT,
@@ -239,11 +263,15 @@ def process_repo_list(repo_data, clone_timeout, processing_timeout, source='gith
         try:
             p.wait(clone_timeout)
         except subprocess.TimeoutExpired:
-            print(f'Git clone for {name} timed out ')
+            print(f'download for {name} timed out ')
             p.kill()
-        shutil.rmtree(f'{repodir}/.git', ignore_errors=True)
+        if repo_type == 'git':
+            # not strictly necessary since we'll skip these directories in the exclude list
+            shutil.rmtree(f'{repodir}/.git', ignore_errors=True)
+        elif repo_type == 'hg':
+            shutil.rmtree(f'{repodir}/.hg', ignore_errors=True)
         # extracts text files from repo and returns them as list : [[text, metadata], ... ]
-        out, meta = timeout(_process_repo, args=(repo_data, repodir, license_filter), timeout_duration=processing_timeout)
+        out, meta = timeout(_process_repo, args=(repo_data, repodir, license_filter, repo_type), timeout_duration=processing_timeout)
     except Exception as e:
         print(e)
         # if verbose:
@@ -274,8 +302,9 @@ def process_args():
     parser.add_argument('--commit_freq', help='how often (in number of chunks) to commit the archive file',
                         default=10,
                         type=int)
-    parser.add_argument('--source', choices=['github', 'gitlab', 'bitbucket'], default='github')
+    parser.add_argument('--source', choices=['github', 'gitlab', 'bitbucket', 'google_code'], default='github')
     parser.add_argument('--language_filter')
+    parser.add_argument('--min_language_size', type=int)
     parser.add_argument('-v', '--verbose', help='if flag is present, print errors', action='store_true')
     parser.add_argument('--open_source_only', action='store_true')
     return parser.parse_args()
@@ -323,8 +352,10 @@ if __name__ == '__main__':
                 t['main_language'] = t['language']
                 t['name'] = t['full_name']
 
+            if args.source == 'google_code':
+                t['main_language'] = t['main_common_language'].lower()
+
             assert 'name' in t, f"csv keys {t.keys()} do not include 'name'"
-            assert 'main_language' in t, f"csv keys {t.keys()} do not include 'main_language'"
 
             if t['name'] in already_processed: 
                 skipped['processed'] += 1
@@ -335,9 +366,18 @@ if __name__ == '__main__':
             if 'license' in t and license_filter is not None and t['license'] not in license_filter:
                 skipped['license'] += 1
                 continue
-            if args.language_filter is not None and t['language'] != args.language_filter:
-                skipped['language'] += 1
-                continue
+
+            if args.language_filter is not None: 
+                if args.min_language_size is not None:
+                    total_sizes_by_language = {k.lower(): v for k, v in json.loads(t['total_sizes_by_language']).items()}
+                    if args.language_filter not in total_sizes_by_language or total_sizes_by_language[args.language_filter] < args.min_language_size:
+                        skipped['language'] += 1
+                        continue
+                else:
+                    assert 'main_language' in t, f"csv keys {t.keys()} do not include 'main_language'"
+                    if t['main_language'] != args.language_filter:
+                        skipped['language'] += 1
+                        continue
             to_process.add(t['name'])
             repo_data_filtered.append(t)
         print(f"{input_csv}:\tskipping {sum(skipped.values())} repos \t {skipped.most_common()}")
