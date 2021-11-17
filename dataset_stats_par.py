@@ -56,15 +56,15 @@ class Worker(Process):
                     "<mask>"
             ])
             codet5_tokenizer = PreTrainedTokenizerFast(tokenizer_object=codet5_tokenizer_model)
-            our_tokenizer_model = ByteLevelBPETokenizer.from_file(
-                "/private/home/dpf/data/github/out_python_forkless_open-source_10-9/github_data_dedup/tokenized_ours/tokenizer_preserve_newlines/vocab.json",
-                "/private/home/dpf/data/github/out_python_forkless_open-source_10-9/github_data_dedup/tokenized_ours/tokenizer_preserve_newlines/merges.txt",
-            )
-            our_tokenizer = PreTrainedTokenizerFast(tokenizer_object=our_tokenizer_model)
+            # our_tokenizer_model = ByteLevelBPETokenizer.from_file(
+            #     "/private/home/dpf/data/github/out_python_forkless_open-source_10-9/github_data_dedup/tokenized_ours/tokenizer_preserve_newlines/vocab.json",
+            #     "/private/home/dpf/data/github/out_python_forkless_open-source_10-9/github_data_dedup/tokenized_ours/tokenizer_preserve_newlines/merges.txt",
+            # )
+            # our_tokenizer = PreTrainedTokenizerFast(tokenizer_object=our_tokenizer_model)
             tokenizers = {
                 'gpt2': gpt2_tokenizer,
                 'codet5': codet5_tokenizer,
-                'ours': our_tokenizer,
+                # 'ours': our_tokenizer,
             }
         else:
             tokenizers = {}
@@ -247,11 +247,18 @@ def tabulate(data, tokenize, n_procs=10, max_items=None):
 
 # data_dir = "scrapes/out_python_forkless_10-9/github_data_1"
 if __name__ == "__main__":
-    data_dir = "scrapes/out_python_forkless_10-9/github_data_dedup"
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("data_dir")
+    parser.add_argument("--source", default='github')
+    args = parser.parse_args()
+
+    data_dir = args.data_dir
+    #data_dir = "scrapes/out_python_forkless_10-9/github_data_dedup"
     # datasets are hashed based on arguments, which are sensitive to trailing dashes (even though loading is not)
     data_dir = data_dir.rstrip("/")
     print(data_dir)
-    data = load_dataset("code_clippy_dataset", data_dir=data_dir)['train']
+    data = load_dataset("code_clippy_dataset", data_dir=data_dir, source=args.source)['train']
 
     file_counts, tabulated, sum_stats, mean_stats = tabulate(data, tokenize=False, n_procs=40)
     display_counts(file_counts, tabulated, sum_stats, mean_stats)

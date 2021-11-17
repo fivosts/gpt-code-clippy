@@ -60,18 +60,20 @@ _URLs = {
 class CodeClippyConfig(datasets.BuilderConfig):
     """BuilderConfig for CodeClippy."""
 
-    def __init__(self, language_filter_type=None, licenses_filter=None, **kwargs):
+    def __init__(self, language_filter_type=None, licenses_filter=None, source='github', **kwargs):
         """BuilderConfig for CodeClippy.
         Args:
           **kwargs: keyword arguments forwarded to super.
         """
         super(CodeClippyConfig, self).__init__(**kwargs)
 
+        # TODO: implement this
         self.language_filter_type = language_filter_type
-        if self.language_filter_type not in ('guesslang', 'repo_language', 'filename_extension'):
-            raise NotImplementedError(f"invalid language_filter_type {self.language_filter_type}")
+        # if self.language_filter_type not in (None, 'guesslang', 'repo_language', 'filename_extension'):
+        #     raise NotImplementedError(f"invalid language_filter_type {self.language_filter_type}")
 
         self.licenses_filter = licenses_filter
+        self.source = source
 
 class CodeClippy(datasets.GeneratorBasedBuilder):
     """CodeClippy dataset - opensource code from Github. Scrapped July 7 2021."""
@@ -84,7 +86,7 @@ class CodeClippy(datasets.GeneratorBasedBuilder):
 
     # If you need to make complex sub-parts in the datasets with configurable options
     # You can create your own builder configuration class to store attribute, inheriting from datasets.BuilderConfig
-    # BUILDER_CONFIG_CLASS = MyBuilderConfig
+    BUILDER_CONFIG_CLASS = CodeClippyConfig
 
     # You will be able to load one or the other configurations in the following list with
     # data = datasets.load_dataset('my_dataset', 'first_domain')
@@ -96,9 +98,9 @@ class CodeClippy(datasets.GeneratorBasedBuilder):
 
     # DEFAULT_CONFIG_NAME = "first_domain"
 
+
     def _info(self):
-        features = datasets.Features(
-            {
+        features = {
                 "id": datasets.Value("int64"),
                 "text": datasets.Value("string"),
                 "repo_name": datasets.Value("string"),
@@ -108,7 +110,30 @@ class CodeClippy(datasets.GeneratorBasedBuilder):
                 "mime_type": datasets.Value("string"),
                 "license": datasets.Value("string"),
             }
-        )
+        if self.config.source == 'google_code':
+            del features['repo_language']
+            features.update({
+                "ancestorRepo": datasets.Value("string"),
+                "compressed_size": datasets.Value("string"),
+                "contentLicense": datasets.Value("string"),
+                "creationTime": datasets.Value("string"),
+                "hasSource": datasets.Value("string"),
+                "imageUrl": datasets.Value("string"),
+                "labels": datasets.Value("string"),
+                "logoName": datasets.Value("string"),
+                "main_common_language": datasets.Value("string"),
+                "main_language": datasets.Value("string"),
+                "movedTo": datasets.Value("string"),
+                "name": datasets.Value("string"),
+                "percents_by_language": datasets.Value("string"),
+                "repoType": datasets.Value("string"),
+                "subrepos": datasets.Value("string"),
+                "summary": datasets.Value("string"),
+                "total_sizes_by_language": datasets.Value("string"),
+                "uncompressed_size": datasets.Value("string"),
+                "zip_file_size": datasets.Value("string"),
+            })
+        features = datasets.Features(features)
         return datasets.DatasetInfo(
             description=_DESCRIPTION,
             features=features,
