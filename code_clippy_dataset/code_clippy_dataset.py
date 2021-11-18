@@ -133,6 +133,19 @@ class CodeClippy(datasets.GeneratorBasedBuilder):
                 "uncompressed_size": datasets.Value("string"),
                 "zip_file_size": datasets.Value("string"),
             })
+        if self.config.source == 'bitbucket':
+            del features['stars']
+            del features['repo_language']
+            features.update({
+                "created_on": datasets.Value("string"),
+                "full_name": datasets.Value("string"),
+                "language": datasets.Value("string"),
+                "main_language": datasets.Value("string"),
+                "name": datasets.Value("string"),
+                "size": datasets.Value("string"),
+                "updated_on": datasets.Value("string"),
+                "uuid": datasets.Value("string"),
+            })
         features = datasets.Features(features)
         return datasets.DatasetInfo(
             description=_DESCRIPTION,
@@ -252,5 +265,13 @@ class CodeClippy(datasets.GeneratorBasedBuilder):
                     filename = line["meta"]["file_name"]
                     start = filename.rfind(".")
                     if filename[start:] in self.lang_exts:
-                        yield id_, {"id": id_, "text": line["text"], **line["meta"]}
+                        meta = line["meta"]
+                        if "detected_licenses" in line["meta"]:
+                            meta = meta.copy()
+                            # if multiple licenses, just concatenate them
+                            # TODO: do something smarter if we want to do all/any filtering on particular license types
+                            license = "+".join(meta["detected_licenses"])
+                            del meta["detected_licenses"]
+                            meta["license"] = license
+                        yield id_, {"id": id_, "text": line["text"], **meta}
                         id_ += 1

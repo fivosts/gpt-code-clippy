@@ -1,3 +1,4 @@
+import sys
 import pprint
 import itertools
 from os.path import splitext
@@ -11,8 +12,6 @@ import numpy as np
 from datasets import load_dataset
 from transformers import GPT2TokenizerFast, PreTrainedTokenizerFast
 from tokenizers import ByteLevelBPETokenizer
-
-from guesslang import Guess
 
 from hacky_linguist import COMMON_LANGUAGES, EXTENSION_TO_LANGUAGE
 
@@ -42,6 +41,7 @@ class Worker(Process):
     def run(self):
         #print(f"worker {self.index} starting")
         if 'guesslang' in LANGUAGE_SOURCES:
+            from guesslang import Guess
             guess = Guess()
         else:
             guess = None
@@ -268,6 +268,8 @@ if __name__ == "__main__":
     parser.add_argument("--num_items", type=int)
     parser.add_argument("--tokenizer_names", nargs='*', choices=POSSIBLE_TOKENIZERS, default=POSSIBLE_TOKENIZERS)
     args = parser.parse_args()
+
+    print(' '.join(sys.argv))
 
     data_dir = args.data_dir
     #data_dir = "scrapes/out_python_forkless_10-9/github_data_dedup"
