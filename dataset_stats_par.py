@@ -26,14 +26,18 @@ ADD_PREFIX_SPACE = False
 #LANGUAGE_SOURCES = ['repo_language', 'guesslang', 'filename_extension']
 LANGUAGE_SOURCES = ['repo_language', 'filename_extension', 'linguist']
 
+POSSIBLE_TOKENIZERS = ["gpt2", "codet5", "ours"]
+
 class Worker(Process):
-    def __init__(self, index, input_queue, output_queue, progress_bar=None, tokenize=True, **kwargs):
+    def __init__(self, index, input_queue, output_queue, progress_bar=None, tokenizer_names=POSSIBLE_TOKENIZERS, **kwargs):
         super().__init__()
         self.index = index
         self.input_queue = input_queue
         self.output_queue = output_queue
         self.progress_bar = progress_bar
-        self.tokenize = tokenize
+        self.tokenizer_names = tokenizer_names[:]
+        for tn in tokenizer_names:
+            assert tn in POSSIBLE_TOKENIZERS, f"invalid tokenizer {tn}"
 
     def run(self):
         #print(f"worker {self.index} starting")
@@ -42,8 +46,10 @@ class Worker(Process):
         else:
             guess = None
         # guess = None
-        if self.tokenize:
-            gpt2_tokenizer = GPT2TokenizerFast.from_pretrained("gpt2", add_prefix_space=ADD_PREFIX_SPACE)
+        tokenizers = {}
+        if "gpt2" in self.tokenizer_names:
+            tokenizers["gpt2"] = GPT2TokenizerFast.from_pretrained("gpt2", add_prefix_space=ADD_PREFIX_SPACE)
+        if "codet5" in self.tokenizer_names:
             codet5_tokenizer_model = ByteLevelBPETokenizer.from_file(
                 "../CodeT5/tokenizer/salesforce/codet5-vocab.json",
                 "../CodeT5/tokenizer/salesforce/codet5-merges.txt"
@@ -55,19 +61,13 @@ class Worker(Process):
                     "<unk>",
                     "<mask>"
             ])
-            codet5_tokenizer = PreTrainedTokenizerFast(tokenizer_object=codet5_tokenizer_model)
-            # our_tokenizer_model = ByteLevelBPETokenizer.from_file(
-            #     "/private/home/dpf/data/github/out_python_forkless_open-source_10-9/github_data_dedup/tokenized_ours/tokenizer_preserve_newlines/vocab.json",
-            #     "/private/home/dpf/data/github/out_python_forkless_open-source_10-9/github_data_dedup/tokenized_ours/tokenizer_preserve_newlines/merges.txt",
-            # )
-            # our_tokenizer = PreTrainedTokenizerFast(tokenizer_object=our_tokenizer_model)
-            tokenizers = {
-                'gpt2': gpt2_tokenizer,
-                'codet5': codet5_tokenizer,
-                # 'ours': our_tokenizer,
-            }
-        else:
-            tokenizers = {}
+            tokenizers["codet5"] = PreTrainedTokenizerFast(tokenizer_object=codet5_tokenizer_model)
+        if "ours" in self.tokenizer_names:
+            our_tokenizer_model = ByteLevelBPETokenizer.from_file(
+                "/private/home/dpf/data/github/out_python_forkless_open-source_10-9/github_data_dedup/tokenized_ours/tokenizer_preserve_newlines/vocab.json",
+                "/private/home/dpf/data/github/out_python_forkless_open-source_10-9/github_data_dedup/tokenized_ours/tokenizer_preserve_newlines/merges.txt",
+            )
+            tokenizers["ours"] = PreTrainedTokenizerFast(tokenizer_object=our_tokenizer_model)
 
         while True:
             x = self.input_queue.get()
@@ -88,7 +88,12 @@ class Worker(Process):
         d = {}
         for ls in LANGUAGE_SOURCES:
             if ls == 'repo_language':
-                d[ls] = x['repo_language']
+                found_language = False
+                for key in ['repo_language', 'main_language']:
+                    if not found_language and key in x:
+                        d[ls] = x[key]
+                        found_language = True
+                assert found_language
             elif ls == 'guesslang':
                 d[ls] = guess.language_name(x['text'])
             elif ls == 'filename_extension' or ls == 'linguist':
@@ -121,10 +126,19 @@ def foo(train):
             break
     return tabulate(data, n_procs=4)
 
-def agg_token_counts(token_counts, agg_fn=np.sum, human_readable=True, limit=None):
+def readable(x, is_size=False):
+    if isinstance(x, float):
+        return f"{x:.2f}"
+    else:
+        if is_size:
+            return humanize.naturalsize(x)
+        else:
+            return f"{x:_}"
+
+def agg_token_counts(token_counts, agg_fn=np.sum, human_readable=True, limit=None, is_size=False):
     def inner_display(d):
         if human_readable:
-            return {k: humanize.naturalsize(v) for k, v in Counter(d).most_common(limit)}
+            return {k: readable(v, is_size=is_size) for k, v in Counter(d).most_common(limit)}
         else:
             return d
     return {
@@ -142,12 +156,12 @@ def display_counts(file_counts, tabulated, sum_stats, mean_stats):
     pprint.pprint(file_counts)
     for stat in sum_stats:
         print(f"{stat} sum:")
-        pprint.pprint(agg_token_counts(tabulated[stat], np.sum))
+        pprint.pprint(agg_token_counts(tabulated[stat], np.sum, is_size='size' in stat))
     for stat in mean_stats:
         print(f"{stat} mean:")
-        pprint.pprint(agg_token_counts(tabulated[stat], np.mean))
+        pprint.pprint(agg_token_counts(tabulated[stat], np.mean, is_size='size' in stat))
 
-def tabulate(data, tokenize, n_procs=10, max_items=None):
+def tabulate(data, tokenizer_names, n_procs=10, max_items=None):
     file_counts = defaultdict(Counter)
 
     # tokenizer, language source, language
@@ -162,8 +176,8 @@ def tabulate(data, tokenize, n_procs=10, max_items=None):
     sum_stats = ['file_size']
     mean_stats = ['file_size']
 
-    if tokenize:
-        for tokenizer in ['ours']:
+    if tokenizer_names:
+        for tokenizer in tokenizer_names:
             sum_stats.append(f'{tokenizer}_token_count')
             mean_stats.append(f'{tokenizer}_token_count')
 
@@ -185,7 +199,7 @@ def tabulate(data, tokenize, n_procs=10, max_items=None):
 
     for i in range(n_procs):
         # signal to stop
-        worker = Worker(i, in_queue, out_queue, tokenize=tokenize)
+        worker = Worker(i, in_queue, out_queue, tokenizer_names=tokenizer_names)
         worker.start()
         running_count += 1
         workers.append(worker)
@@ -208,7 +222,7 @@ def tabulate(data, tokenize, n_procs=10, max_items=None):
             r = out_queue.get()
             if r is None:
                 running_count -= 1
-                print(f"running count: {running_count}")
+                #print(f"running count: {running_count}")
                 out_queue.task_done()
                 continue
             datum, this_tabulated = r
@@ -251,6 +265,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("data_dir")
     parser.add_argument("--source", default='github')
+    parser.add_argument("--num_items", type=int)
+    parser.add_argument("--tokenizer_names", nargs='*', choices=POSSIBLE_TOKENIZERS, default=POSSIBLE_TOKENIZERS)
     args = parser.parse_args()
 
     data_dir = args.data_dir
@@ -260,5 +276,7 @@ if __name__ == "__main__":
     print(data_dir)
     data = load_dataset("code_clippy_dataset", data_dir=data_dir, source=args.source)['train']
 
-    file_counts, tabulated, sum_stats, mean_stats = tabulate(data, tokenize=False, n_procs=40)
+    file_counts, tabulated, sum_stats, mean_stats = tabulate(
+        data, tokenizer_names=args.tokenizer_names, n_procs=40, max_items=args.num_items
+    )
     display_counts(file_counts, tabulated, sum_stats, mean_stats)
