@@ -146,6 +146,17 @@ class CodeClippy(datasets.GeneratorBasedBuilder):
                 "updated_on": datasets.Value("string"),
                 "uuid": datasets.Value("string"),
             })
+        if self.config.source == 'gitlab':
+            del features['repo_language']
+            features.update({
+                "is_fork": datasets.Value("string"),
+                "languages": datasets.Value("string"),
+                "last_activity_at": datasets.Value("string"),
+                "main_language": datasets.Value("string"),
+                "name": datasets.Value("string"),
+                "tags": datasets.Value("string"),
+                "url": datasets.Value("string"),
+            })
         features = datasets.Features(features)
         return datasets.DatasetInfo(
             description=_DESCRIPTION,
