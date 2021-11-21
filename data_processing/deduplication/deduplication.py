@@ -2,23 +2,29 @@ import argparse
 import datasets
 import lm_dataformat
 import re
+from typing import Set, Tuple
 
-parser = argparse.ArgumentParser(description="Deduplicate a list of files")
-parser.add_argument("--data_dir", type=str, required=True)
-parser.add_argument("--output_dir", type=str, required=True)
-parser.add_argument("--archive_commit_freq", type=int, default=10_000)
-args = parser.parse_args()
+KEY_LENGTH = 20
 
-dataset = datasets.load_dataset("script.py", data_dir=args.data_dir, split="train")
+TOKEN_RE = re.compile(r"\W+")
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Deduplicate a list of files")
+    parser.add_argument("--data_dir", type=str, required=True)
+    parser.add_argument("--output_dir", type=str, required=True)
+    parser.add_argument("--archive_commit_freq", type=int, default=10_000)
+    args = parser.parse_args()
+
+    dataset = datasets.load_dataset("script.py", data_dir=args.data_dir, split="train")
 
 print(f"n examples before deduplication: {len(dataset)}")
 
 unique_variables = set()
 
-def get_variables(examples):
+def get_variables(examples, unique_variables: Set[Tuple[int, str]]):
     """Convert a code string to a list of variables.
     We assume a variable is a 'word' with only alphanumeric characters in it."""
-    variables = [" ".join(re.split(r"\W+", text)) for text in examples["text"]]
+    variables = [" ".join(re.split(, text)) for text in examples["text"]]
     for v in variables:
         unique_variables.add(v)
     return {"variables": variables}

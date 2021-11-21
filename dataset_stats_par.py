@@ -2,7 +2,7 @@ import sys
 import pprint
 import itertools
 from os.path import splitext
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, namedtuple
 from multiprocessing import Pool, Process, JoinableQueue
 
 import tqdm
@@ -20,8 +20,6 @@ from hacky_linguist import COMMON_LANGUAGES, EXTENSION_TO_LANGUAGE
 # words by the preceding space).
 ADD_PREFIX_SPACE = False
 
-## two CRs after this line
-
 #LANGUAGE_SOURCES = ['repo_language', 'guesslang', 'filename_extension']
 LANGUAGE_SOURCES = ['repo_language', 'filename_extension', 'linguist']
 
@@ -29,7 +27,7 @@ POSSIBLE_TOKENIZERS = ["gpt2", "codet5", "ours"]
 
 class Worker(Process):
     def __init__(self, index, input_queue, output_queue, progress_bar=None, tokenizer_names=POSSIBLE_TOKENIZERS, **kwargs):
-        super().__init__()
+        super().__init__(**kwargs)
         self.index = index
         self.input_queue = input_queue
         self.output_queue = output_queue
@@ -71,17 +69,17 @@ class Worker(Process):
 
         while True:
             x = self.input_queue.get()
+            if self.progress_bar:
+                with self.progress_bar.get_lock():
+                    self.progress_bar.update(1)
             if x is None:
                 self.output_queue.put(None)
                 self.input_queue.task_done()
                 break
             tabulated = self.tabulate_single(guess, tokenizers, x)
-            if self.progress_bar:
-                with self.progress_bar.get_lock():
-                    self.progress_bar.update(1)
             self.output_queue.put((x, tabulated))
             self.input_queue.task_done()
-        # print(f"worker {self.index} ending")
+        print(f"worker {self.index} ending")
 
     @staticmethod
     def tabulate_single(guess, tokenizers, x):
@@ -112,10 +110,10 @@ class Worker(Process):
             tokens = tokenizer(x['text'])['input_ids']
             token_count = len(tokens)
             d[f'{tokenizer_name}_token_count'] = token_count
-            d[f'{tokenizer_name}_above_1024'] = 1.0 if token_count > 1024 else 0.0
-            d[f'{tokenizer_name}_above_2048'] = 1.0 if token_count > 2048 else 0.0
-            d[f'{tokenizer_name}_lost_1024'] = max(token_count - 1024, 0)
-            d[f'{tokenizer_name}_lost_2048'] = max(token_count - 2048, 0)
+            # d[f'{tokenizer_name}_above_1024'] = 1.0 if token_count > 1024 else 0.0
+            # d[f'{tokenizer_name}_above_2048'] = 1.0 if token_count > 2048 else 0.0
+            # d[f'{tokenizer_name}_lost_1024'] = max(token_count - 1024, 0)
+            # d[f'{tokenizer_name}_lost_2048'] = max(token_count - 2048, 0)
         return d
 
 def foo(train):
@@ -134,6 +132,22 @@ def readable(x, is_size=False):
             return humanize.naturalsize(x)
         else:
             return f"{x:_}"
+
+class WeightedSum:
+    def __init__(self):
+        self.sum = 0
+        self.total_weight = 0
+
+    def add(self, value, weight=1.0):
+        self.sum += value
+        self.total_weight += weight
+
+    @property
+    def mean(self):
+        if self.total_weight >= 0:
+            return self.total_weight / self.sum
+        else:
+            return 0
 
 def agg_token_counts(token_counts, agg_fn=np.sum, human_readable=True, limit=None, is_size=False):
     def inner_display(d):
@@ -156,22 +170,16 @@ def display_counts(file_counts, tabulated, sum_stats, mean_stats):
     pprint.pprint(file_counts)
     for stat in sum_stats:
         print(f"{stat} sum:")
-        pprint.pprint(agg_token_counts(tabulated[stat], np.sum, is_size='size' in stat))
+        pprint.pprint(agg_token_counts(tabulated[stat], lambda ws: ws.sum, is_size='size' in stat))
     for stat in mean_stats:
         print(f"{stat} mean:")
-        pprint.pprint(agg_token_counts(tabulated[stat], np.mean, is_size='size' in stat))
+        pprint.pprint(agg_token_counts(tabulated[stat], lambda ws: ws.mean, is_size='size' in stat))
 
 def tabulate(data, tokenizer_names, n_procs=10, max_items=None):
     file_counts = defaultdict(Counter)
 
     # tokenizer, language source, language
-    # token_counts = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
-    # token_counts_above_1024 = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
-    # token_counts_above_2048 = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
-    # tokens_lost_1024 = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
-    # tokens_lost_2048 = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
-
-    tabulated = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+    tabulated = defaultdict(lambda: defaultdict(lambda: defaultdict(WeightedSum)))
 
     sum_stats = ['file_size']
     mean_stats = ['file_size']
@@ -181,15 +189,13 @@ def tabulate(data, tokenizer_names, n_procs=10, max_items=None):
             sum_stats.append(f'{tokenizer}_token_count')
             mean_stats.append(f'{tokenizer}_token_count')
 
-            sum_stats.append(f'{tokenizer}_lost_1024')
-            sum_stats.append(f'{tokenizer}_lost_2048')
+            # sum_stats.append(f'{tokenizer}_lost_1024')
+            # sum_stats.append(f'{tokenizer}_lost_2048')
 
-            mean_stats.append(f'{tokenizer}_above_1024')
-            mean_stats.append(f'{tokenizer}_above_2048')
+            # mean_stats.append(f'{tokenizer}_above_1024')
+            # mean_stats.append(f'{tokenizer}_above_2048')
 
     all_stats = list(set(sum_stats) | set(mean_stats))
-
-    guesslang_mismatch = defaultdict(list)
 
     in_queue, out_queue = JoinableQueue(), JoinableQueue()
 
@@ -210,15 +216,17 @@ def tabulate(data, tokenizer_names, n_procs=10, max_items=None):
     else:
         num_items = len(data)
 
+    num_jobs = 0
     for x in tqdm.tqdm(data, ncols=80, desc="loading queue"):
         in_queue.put(x)
+        num_jobs += 1
 
     for i in range(n_procs):
         in_queue.put(None)
 
     file_count = 0
-    with tqdm.tqdm(total=num_items, ncols=80, desc="processing") as progress_bar:
-        while running_count >= 1:
+    with tqdm.tqdm(total=num_jobs, ncols=80, desc="processing") as progress_bar:
+        while num_jobs > 0:
             r = out_queue.get()
             if r is None:
                 running_count -= 1
@@ -226,13 +234,14 @@ def tabulate(data, tokenizer_names, n_procs=10, max_items=None):
                 out_queue.task_done()
                 continue
             datum, this_tabulated = r
+            num_jobs -= 1
             
             for language_source in LANGUAGE_SOURCES:
                 language = this_tabulated[language_source]
                 file_counts[language_source][language] += 1
                 #for tokenizer in ['gpt2', 'codet5', 'ours']:
                 for stat in all_stats:
-                    tabulated[stat][language_source][language].append(this_tabulated[stat])
+                    tabulated[stat][language_source][language].add(this_tabulated[stat], 1)
             progress_bar.update(1)
             out_queue.task_done()
             file_count += 1
@@ -241,44 +250,35 @@ def tabulate(data, tokenizer_names, n_procs=10, max_items=None):
                 display_counts(file_counts, tabulated, sum_stats, mean_stats)
                 print()
 
-        [worker.join() for worker in workers]
+        #[worker.join() for worker in workers]
 
-    in_queue.join()
-    out_queue.join()
-
-        # if tabulated['filename_extension'] == '.py' and tabulated['guesslang'] != 'Python':
-        #     guesslang_mismatch[tabulated['guesslang']].append((datum['repo_name'], datum['file_name']))
+    # print("calling inqueue.join")
+    # in_queue.join()
+    # print("calling outqueue.join")
+    # out_queue.join()
+    print("done")
 
     return file_counts, tabulated, sum_stats, mean_stats
 
-## before converting to not need train dir
-#data = load_dataset("code_clippy_dataset", data_dir="scrapes/out_forkless_open-source_10-1/")['train']
-#data = load_dataset("code_clippy_dataset", data_dir="scrapes/out_forkless_open-source_10-1_dedup")['train']
-#data = load_dataset("code_clippy_dataset", data_dir="scrapes/out_forkless_10-1")['train']
-
-## after converting to not need train dir
-# data_dir = "scrapes/out_python_forkless_open-source_10-9/github_data_dedup"
-
-# data_dir = "scrapes/out_python_forkless_10-9/github_data_1"
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("data_dir")
     parser.add_argument("--source", default='github')
     parser.add_argument("--num_items", type=int)
+    parser.add_argument("--n_procs", type=int, default=10)
     parser.add_argument("--tokenizer_names", nargs='*', choices=POSSIBLE_TOKENIZERS, default=POSSIBLE_TOKENIZERS)
     args = parser.parse_args()
 
     print(' '.join(sys.argv))
 
     data_dir = args.data_dir
-    #data_dir = "scrapes/out_python_forkless_10-9/github_data_dedup"
     # datasets are hashed based on arguments, which are sensitive to trailing dashes (even though loading is not)
     data_dir = data_dir.rstrip("/")
     print(data_dir)
     data = load_dataset("code_clippy_dataset", data_dir=data_dir, source=args.source)['train']
 
     file_counts, tabulated, sum_stats, mean_stats = tabulate(
-        data, tokenizer_names=args.tokenizer_names, n_procs=40, max_items=args.num_items
+        data, tokenizer_names=args.tokenizer_names, n_procs=args.n_procs, max_items=args.num_items
     )
     display_counts(file_counts, tabulated, sum_stats, mean_stats)
