@@ -32,30 +32,47 @@ def check_uniques(example, unique_signatures_: Set[Tuple[str, bytes, int]]):
     else:
         return False
 
+def strip_trailing_slash(path):
+    while path[-1] == '/':
+        path = path[:-1]
+    return path
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Deduplicate a list of files")
-    parser.add_argument("--data_dirs", type=str, required=True)
-    parser.add_argument("--output_dir", type=str, required=True)
+    parser.add_argument("--data_dirs", nargs="*")
     parser.add_argument("--signature_file", type=str, required=True)
     parser.add_argument("--archive_commit_freq", type=int, default=10_000)
     args = parser.parse_args()
 
-    def write_signature_file(unique_signatures):
+    def write_signature_file(unique_signatures, processed_data_dirs):
         print(f"writing to signature file {args.signature_file}")
         with open(args.signature_file, 'wb') as f:
-            pickle.dump(unique_signatures, f)
+            pickle.dump({
+                'processed_data_dirs': processed_data_dirs,
+                'unique_signatures': unique_signatures,
+            }, f)
 
     if os.path.exists(args.signature_file):
         print(f"loading existing signature file from {args.signature_file}")
         with open(args.signature_file, 'rb') as f:
-            unique_signatures = pickle.load(f)
+            d = pickle.load(f)
+            unique_signatures, processed_data_dirs = d['unique_signatures'], d['processed_data_dirs']
     else:
         unique_signatures = set()
+        processed_data_dirs = []
     print(f"initial number of signatures: {len(unique_signatures)}")
+    if processed_data_dirs:
+        print(f"previously procssed data_dirs:")
+        print('\n'.join(processed_data_dirs))
 
     for data_dir in args.data_dirs:
-        dataset = datasets.load_dataset("script.py", data_dir=args.data_dir, split="train")
-        print(f": {len(dataset)}")
+        data_dir = strip_trailing_slash(data_dir)
+
+        output_dir = data_dir + "_dedup"
+        print(f"deduplicating to directory {output_dir}")
+        os.makedirs(output_dir)
+
+        dataset = datasets.load_dataset("code_clippy_dataset", data_dir=data_dir, split="train")
 
         unique_in_this = set()
         dataset = dataset.map(get_signatures, batched=True, fn_kwargs={"unique_signatures_": unique_in_this})
@@ -73,8 +90,10 @@ if __name__ == "__main__":
         deduplicated_dataset = dataset.filter(check_uniques, fn_kwargs={"unique_signatures_": unique_signatures_updated})
 
         assert len(deduplicated_dataset) == n_marginal_unique
+        print(f"{len(dataset)} entries before deduplication; read from {data_dir}")
+        print(f"{len(deduplicated_dataset)} entries before deduplication; writing to {output_dir}")
 
-        ar = lm_dataformat.Archive(args.output_dir)
+        ar = lm_dataformat.Archive(output_dir)
 
         for i, example in enumerate(deduplicated_dataset):
             code = example["text"]
@@ -84,4 +103,5 @@ if __name__ == "__main__":
             if i > 0 and i % args.archive_commit_freq == 0:
                 ar.commit()
         ar.commit()
-        write_signature_file(unique_signatures)
+        processed_data_dirs.append(data_dir)
+        write_signature_file(unique_signatures, procssed_data_dirs)

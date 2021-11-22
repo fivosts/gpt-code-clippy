@@ -144,10 +144,10 @@ class WeightedSum:
 
     @property
     def mean(self):
-        if self.total_weight >= 0:
-            return self.total_weight / self.sum
+        if self.total_weight > 0:
+            return float(self.sum) / self.total_weight
         else:
-            return 0
+            return 0.0
 
 def agg_token_counts(token_counts, agg_fn=np.sum, human_readable=True, limit=None, is_size=False):
     def inner_display(d):

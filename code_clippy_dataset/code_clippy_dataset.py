@@ -50,12 +50,12 @@ BASE_FEATURES = {
     "file_name": datasets.Value("string"),
     "mime_type": datasets.Value("string"),
     "license": datasets.Value("string"),
+    "repo_language": datasets.Value("string"),
 }
 
 EXTRA_FEATURES = {
     'github': [
         "stars",
-        "repo_language",
     ],
     'google_code': [
         "ancestorRepo",
@@ -67,9 +67,7 @@ EXTRA_FEATURES = {
         "labels",
         "logoName",
         "main_common_language",
-        "main_language",
         "movedTo",
-        "name",
         "percents_by_language",
         "repoType",
         "stars",
@@ -83,8 +81,6 @@ EXTRA_FEATURES = {
         "created_on",
         "full_name",
         "language",
-        "main_language",
-        "name",
         "size",
         "updated_on",
         "uuid",
@@ -93,8 +89,6 @@ EXTRA_FEATURES = {
         "is_fork",
         "languages",
         "last_activity_at",
-        "main_language",
-        "name",
         "stars",
         "tags",
         "url",
@@ -184,12 +178,27 @@ class CodeClippy(datasets.GeneratorBasedBuilder):
                 f = io.TextIOWrapper(f, encoding="utf-8")
                 f = jsonlines.Reader(f)
                 for line in f:
-                    filename = line["meta"]["file_name"]
+                    meta = line["meta"]
+                    filename = meta["file_name"]
                     _, extension = os.path.splitext(filename)
+
+                    # column renames
+                    if "main_language" in meta and "repo_language" not in meta:
+                        meta["repo_language"] = meta["main_language"]
+                        del meta["main_language"]
+                    if "stargazers" in meta:
+                        meta["stars"] = meta["stargazers"]
+                        del meta["stargazers"]
+
+                    if "name" in meta:
+                        if "repo_name" in meta["repo_name"]:
+                            assert meta["repo_name"] == meta["name"]
+                        else:
+                            meta["repo_name"] = meta["name"]
+                        del meta["name"]
+
                     if extension in LANGUAGE_EXTENSIONS:
-                        meta = line["meta"]
-                        if "detected_licenses" in line["meta"]:
-                            meta = meta.copy()
+                        if "detected_licenses" in meta:
                             # if multiple licenses, just concatenate them
                             # TODO: do something smarter if we want to do all/any filtering on particular license types
                             license = "+".join(meta["detected_licenses"])

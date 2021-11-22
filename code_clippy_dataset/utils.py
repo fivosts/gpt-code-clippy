@@ -2,7 +2,8 @@ import numpy as np
 from code_clippy_dataset.code_clippy_dataset import BASE_FEATURES, EXTRA_FEATURES
 
 def standardize(dataset, verbose=True):
-    """ remove all source-specific columns, keeping only those that occur in all repo sources """
+    """ remove all source-specific columns, keeping only those that occur in all repo sources.
+    also adds extra columns with default values """
 
     found = False
     for source, extra_features in EXTRA_FEATURES.items():
