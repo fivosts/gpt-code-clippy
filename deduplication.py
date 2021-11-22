@@ -9,23 +9,23 @@ import pickle
 
 TOKEN_RE = re.compile(r"\W+")
 
-def get_signatures(examples, unique_signatures_: Set[Tuple[str, bytes, int]]):
+def get_signatures(examples):
     """Convert a batch of code string to a list of tokens, then return a hash signature for the token list."""
     """signature: file extension, md5 digest of the joined tokens, and number of tokens"""
+    assert len(examples["text"]) == len(examples["file_name"]), f"{len(examples['text'])} != {len(examples['file_name'])}"
     all_tokens = [TOKEN_RE.split(text) for text in examples["text"]]
     extensions = [os.path.splitext(file_name)[1] for file_name in examples["file_name"]]
-    assert len(all_tokens) == len(extensions)
+    assert len(all_tokens) == len(extensions), f"{len(all_tokens)} != {len(extensions)}"
     signatures = [
         # using the number of tokens as well as the md5 is probably overkill but will help avoid any collisions
-        (extension, hashlib.md5(' '.join(tokens)).digest(), len(tokens)) 
+        f"{extension}_{hashlib.md5(' '.join(tokens).encode()).hexdigest()}_{len(tokens)}" 
         for tokens, extension in zip(all_tokens, extensions)
     ]
-    unique_signatures_.update(signatures)
     return {"signature": signatures}
 
 def check_uniques(example, unique_signatures_: Set[Tuple[str, bytes, int]]):
     """If an example is in uniques, return True and remove it from uniques."""
-    signature = example["signatures"]
+    signature = example["signature"]
     if signature in unique_signatures_:
         unique_signatures_.remove(signature)
         return True
@@ -42,6 +42,7 @@ if __name__ == "__main__":
     parser.add_argument("--data_dirs", nargs="*")
     parser.add_argument("--signature_file", type=str, required=True)
     parser.add_argument("--archive_commit_freq", type=int, default=10_000)
+    parser.add_argument("--num_proc", type=int, default=10)
     args = parser.parse_args()
 
     def write_signature_file(unique_signatures, processed_data_dirs):
@@ -74,8 +75,8 @@ if __name__ == "__main__":
 
         dataset = datasets.load_dataset("code_clippy_dataset", data_dir=data_dir, split="train")
 
-        unique_in_this = set()
-        dataset = dataset.map(get_signatures, batched=True, fn_kwargs={"unique_signatures_": unique_in_this})
+        dataset = dataset.map(get_signatures, batched=True, num_proc=args.num_proc, desc='computing signatures')
+        unique_in_this = set(dataset.unique('signature'))
         unique_signatures_updated = unique_in_this | unique_signatures
 
         n_marginal_unique = len(unique_signatures_updated) - len(unique_signatures)
@@ -104,4 +105,4 @@ if __name__ == "__main__":
                 ar.commit()
         ar.commit()
         processed_data_dirs.append(data_dir)
-        write_signature_file(unique_signatures, procssed_data_dirs)
+        write_signature_file(unique_signatures, processed_data_dirs)
