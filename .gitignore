@@ -139,3 +139,4 @@ wandb/
 _tmp/
 _*.py
 _*.ipynb
+*.lock

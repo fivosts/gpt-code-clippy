@@ -22,6 +22,7 @@ from typing import List
 import jsonlines
 import zstandard as zstd
 from pathlib import Path
+import os.path
 
 import datasets
 
@@ -184,8 +185,8 @@ class CodeClippy(datasets.GeneratorBasedBuilder):
                 f = jsonlines.Reader(f)
                 for line in f:
                     filename = line["meta"]["file_name"]
-                    start = filename.rfind(".")
-                    if filename[start:] in LANGUAGE_EXTENSIONS:
+                    _, extension = os.path.splitext(filename)
+                    if extension in LANGUAGE_EXTENSIONS:
                         meta = line["meta"]
                         if "detected_licenses" in line["meta"]:
                             meta = meta.copy()
@@ -196,12 +197,3 @@ class CodeClippy(datasets.GeneratorBasedBuilder):
                             meta["license"] = license
                         yield id_, {"id": id_, "text": line["text"], **meta}
                         id_ += 1
-
-def strip_extra_features(dataset):
-    """ remove all source-specific columns, keeping only those that occur in all repo sources """
-    features_to_keep = BASE_FEATURES.keys()
-    features_to_remove = [
-        feature for feature in dataset.features.keys()
-        if feature not in features_to_keep
-    ]
-    return dataset.remove_columns(features_to_remove)
