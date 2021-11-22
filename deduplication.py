@@ -1,3 +1,4 @@
+import sys
 import argparse
 import datasets
 import lm_dataformat
@@ -43,7 +44,10 @@ if __name__ == "__main__":
     parser.add_argument("--signature_file", type=str, required=True)
     parser.add_argument("--archive_commit_freq", type=int, default=10_000)
     parser.add_argument("--num_proc", type=int, default=10)
+    parser.add_argument("--source", default="github")
+    parser.add_argument("--output_dir_exist_ok", action="store_true")
     args = parser.parse_args()
+    print(' '.join(sys.argv))
 
     def write_signature_file(unique_signatures, processed_data_dirs):
         print(f"writing to signature file {args.signature_file}")
@@ -71,24 +75,27 @@ if __name__ == "__main__":
 
         output_dir = data_dir + "_dedup"
         print(f"deduplicating to directory {output_dir}")
-        os.makedirs(output_dir)
+        os.makedirs(output_dir, exist_ok=args.output_dir_exist_ok)
 
-        dataset = datasets.load_dataset("code_clippy_dataset", data_dir=data_dir, split="train")
+        dataset = datasets.load_dataset("code_clippy_dataset", data_dir=data_dir, split="train", source=args.source)
 
         dataset = dataset.map(get_signatures, batched=True, num_proc=args.num_proc, desc='computing signatures')
         unique_in_this = set(dataset.unique('signature'))
-        unique_signatures_updated = unique_in_this | unique_signatures
+        marginal_unique_in_this = unique_in_this - unique_signatures
 
+        unique_signatures_updated = unique_in_this | unique_signatures
         n_marginal_unique = len(unique_signatures_updated) - len(unique_signatures)
 
-        print(f"{len(unique_in_this)} / {len(dataset)} in this dataset unique to the dataset")
-        print(f"{n_marginal_unique} / {len(dataset)} in this dataset unique overall")
-        print(f"{len(unique_signatures)} unique signatures total")
+        assert n_marginal_unique == len(marginal_unique_in_this)
 
-        # new_unique_signatures will be modified in place
-        unique_signatures = unique_signatures_updated.copy()
+        print(f"{len(unique_signatures)} unique signatures, previously")
+        print(f"{len(unique_in_this)} / {len(dataset)} = {len(unique_in_this)/len(dataset)*100:.2f}% in this dataset are unique to this dataset")
+        print(f"{n_marginal_unique} / {len(dataset)} = {n_marginal_unique/len(dataset)*100:.2f}% in this dataset are unique overall")
+        print(f"{len(unique_signatures)} unique signatures, including this dataset")
 
-        deduplicated_dataset = dataset.filter(check_uniques, fn_kwargs={"unique_signatures_": unique_signatures_updated})
+        unique_signatures = unique_signatures_updated
+
+        deduplicated_dataset = dataset.filter(check_uniques, fn_kwargs={"unique_signatures_": marginal_unique_in_this})
 
         assert len(deduplicated_dataset) == n_marginal_unique
         print(f"{len(dataset)} entries before deduplication; read from {data_dir}")
