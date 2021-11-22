@@ -99,7 +99,7 @@ if __name__ == "__main__":
 
         assert len(deduplicated_dataset) == n_marginal_unique
         print(f"{len(dataset)} entries before deduplication; read from {data_dir}")
-        print(f"{len(deduplicated_dataset)} entries before deduplication; writing to {output_dir}")
+        print(f"{len(deduplicated_dataset)} entries after deduplication; writing to {output_dir}")
 
         ar = lm_dataformat.Archive(output_dir)
 
