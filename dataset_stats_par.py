@@ -151,6 +151,7 @@ class WeightedSum:
 
 def agg_token_counts(token_counts, agg_fn=np.sum, human_readable=True, limit=None, is_size=False):
     def inner_display(d):
+        d['total'] = sum(d.values())
         if human_readable:
             return {k: readable(v, is_size=is_size) for k, v in Counter(d).most_common(limit)}
         else:
