@@ -1,8 +1,10 @@
+import csv
 import sys
 import pprint
 import tqdm
 from datasets import load_dataset
 import humanize
+import os.path
 
 
 def filter_data(data, filter_fn, prefix="", print_new_repos=False):
@@ -39,11 +41,31 @@ if __name__ == "__main__":
         "/private/home/dpf/data/gitlab/python_open-source/data_dedup",
         "/private/home/dpf/data/bitbucket/python_open-source/data_dedup",
     ])
-    parser.add_argument("--string_to_check", default="GNU General Public License")
+    #parser.add_argument("--string_to_check", default="GNU General Public License")
+    parser.add_argument("--string_to_check")
+    parser.add_argument("--repos_and_fname_to_check", nargs="+")
     args = parser.parse_args()
 
-    def file_is_gpl(record):
-        return args.string_to_check in record['text']
+    if args.repos_and_fname_to_check is not None:
+        repos_and_basenames = set()
+        for fname in args.repos_and_fname_to_check:
+            with open(fname, 'r') as f:
+                reader = csv.DictReader(f, ["repo_name", "path"])
+                records = list(reader)
+                repos_and_basenames.update(
+                    (record['repo_name'], os.path.basename(record['path']))
+                    for record in records
+                )
+    else:
+        repos_and_basenames = None
+
+    def file_contaminated(record):
+        contaminated = False
+        if repos_and_basenames is not None:
+            contaminated |= ((record['repo_name'], record['file_name']) in repos_and_basenames)
+        if args.string_to_check is not None:
+            contaminated |= (args.string_to_check in record['text'])
+        return contaminated
 
     print(' '.join(sys.argv))
     pprint.pprint(vars(args))
@@ -53,12 +75,12 @@ if __name__ == "__main__":
         print(f"checking data_dir {data_dir}")
         data = load_dataset("code_clippy_dataset", data_dir=data_dir.rstrip("/"), source=source)["train"]
 
-        repos_lost = filter_data(data, file_is_gpl, prefix="file is GPL", print_new_repos=True)
+        repos_lost = filter_data(data, file_contaminated, prefix="file contaminated", print_new_repos=True)
 
         def repo_contaminated(record):
             return record['repo_name'] in repos_lost
 
         if bool(repos_lost):
-            filter_data(data, repo_contaminated, prefix="repo has GPL file", print_new_repos=False)
+            filter_data(data, repo_contaminated, prefix="repo has contaminated file", print_new_repos=False)
         else:
             print(f"nothing found for {data_dir}")

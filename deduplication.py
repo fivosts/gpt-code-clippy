@@ -44,7 +44,7 @@ if __name__ == "__main__":
     parser.add_argument("--signature_file", type=str, required=True)
     parser.add_argument("--archive_commit_freq", type=int, default=10_000)
     parser.add_argument("--num_proc", type=int, default=10)
-    parser.add_argument("--source", default="github")
+    parser.add_argument("--source", choices=['github', 'google_code', 'bitbucket', 'gitlab'])
     parser.add_argument("--output_dir_exist_ok", action="store_true")
     args = parser.parse_args()
     print(' '.join(sys.argv))
@@ -73,11 +73,28 @@ if __name__ == "__main__":
     for data_dir in args.data_dirs:
         data_dir = strip_trailing_slash(data_dir)
 
+        if args.source is None:
+            sources = []
+            if 'github' in data_dir:
+                sources.append('github')
+            if 'google-code' in data_dir or 'google_code' in data_dir:
+                sources.append('google_code')
+            if 'bitbucket' in data_dir:
+                sources.append('bitbucket')
+            if 'gitlab' in data_dir:
+                sources.append('gitlab')
+            if len(sources) != 1:
+                print(f"--args.source not specified and could not infer source from path {data_dir}")
+                sys.exit(1)
+            source = sources[0]
+            print(f"inferred source {source} from path {data_dir}")
+        else:
+            source = args.source
+
         output_dir = data_dir + "_dedup"
         print(f"deduplicating to directory {output_dir}")
         os.makedirs(output_dir, exist_ok=args.output_dir_exist_ok)
-
-        dataset = datasets.load_dataset("code_clippy_dataset", data_dir=data_dir, split="train", source=args.source)
+        dataset = datasets.load_dataset("code_clippy_dataset", data_dir=data_dir, split="train", source=source)
 
         dataset = dataset.map(get_signatures, batched=True, num_proc=args.num_proc, desc='computing signatures')
         unique_in_this = set(dataset.unique('signature'))
