@@ -2,13 +2,13 @@ import sys
 import argparse
 import datasets
 import lm_dataformat
-import re
 from typing import Set, Tuple
 import hashlib
 import os.path
 import pickle
+import code_clippy_dataset.utils
 
-TOKEN_RE = re.compile(r"\W+")
+from code_clippy_dataset.utils import TOKEN_RE
 
 def get_signatures(examples):
     """Convert a batch of code string to a list of tokens, then return a hash signature for the token list."""
@@ -74,19 +74,7 @@ if __name__ == "__main__":
         data_dir = strip_trailing_slash(data_dir)
 
         if args.source is None:
-            sources = []
-            if 'github' in data_dir:
-                sources.append('github')
-            if 'google-code' in data_dir or 'google_code' in data_dir:
-                sources.append('google_code')
-            if 'bitbucket' in data_dir:
-                sources.append('bitbucket')
-            if 'gitlab' in data_dir:
-                sources.append('gitlab')
-            if len(sources) != 1:
-                print(f"--args.source not specified and could not infer source from path {data_dir}")
-                sys.exit(1)
-            source = sources[0]
+            source = code_clippy_dataset.utils.infer_source_from_data_dir(data_dir)
             print(f"inferred source {source} from path {data_dir}")
         else:
             source = args.source

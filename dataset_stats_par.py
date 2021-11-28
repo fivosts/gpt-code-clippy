@@ -13,6 +13,8 @@ from datasets import load_dataset
 from transformers import GPT2TokenizerFast, PreTrainedTokenizerFast
 from tokenizers import ByteLevelBPETokenizer
 
+import sentencepiece
+
 from hacky_linguist import COMMON_LANGUAGES, EXTENSION_TO_LANGUAGE
 
 # HF: Whether or not to add an initial space to the input. This allows to treat
@@ -23,7 +25,9 @@ ADD_PREFIX_SPACE = False
 #LANGUAGE_SOURCES = ['repo_language', 'guesslang', 'filename_extension']
 LANGUAGE_SOURCES = ['repo_language', 'filename_extension', 'linguist']
 
-POSSIBLE_TOKENIZERS = ["gpt2", "codet5", "ours"]
+POSSIBLE_TOKENIZERS = ["gpt2", "codet5", "bpe", "bpe_rn", "sentencepiece", "sentencepiece_rn"]
+
+from train_multicorp_tokenizer import NEWLINE_REP
 
 class Worker(Process):
     def __init__(self, index, input_queue, output_queue, progress_bar=None, tokenizer_names=POSSIBLE_TOKENIZERS, **kwargs):
@@ -60,12 +64,41 @@ class Worker(Process):
                     "<mask>"
             ])
             tokenizers["codet5"] = PreTrainedTokenizerFast(tokenizer_object=codet5_tokenizer_model)
-        if "ours" in self.tokenizer_names:
+        if "bpe" in self.tokenizer_names:
             our_tokenizer_model = ByteLevelBPETokenizer.from_file(
-                "/private/home/dpf/data/github/out_python_forkless_open-source_10-9/github_data_dedup/tokenized_ours/tokenizer_preserve_newlines/vocab.json",
-                "/private/home/dpf/data/github/out_python_forkless_open-source_10-9/github_data_dedup/tokenized_ours/tokenizer_preserve_newlines/merges.txt",
+                "tokenizers/github-py-js+so_bpe_rn-False/vocab.json",
+                "tokenizers/github-py-js+so_bpe_rn-False/merges.txt",
             )
-            tokenizers["ours"] = PreTrainedTokenizerFast(tokenizer_object=our_tokenizer_model)
+            tokenizers["bpe"] = PreTrainedTokenizerFast(tokenizer_object=our_tokenizer_model)
+        if "bpe_rn" in self.tokenizer_names:
+            our_tokenizer_model_rn = ByteLevelBPETokenizer.from_file(
+                "tokenizers/github-py-js+so_bpe_rn-True/vocab.json",
+                "tokenizers/github-py-js+so_bpe_rn-True/merges.txt",
+            )
+            our_tokenizer_rn = PreTrainedTokenizerFast(tokenizer_object=our_tokenizer_model_rn)
+            def bpe_rn_tokenize(text):
+                text = text.replace("\n", NEWLINE_REP)
+                return our_tokenizer_rn(text)
+            tokenizers["bpe_rn"] = bpe_rn_tokenize
+        if "sentencepiece" in self.tokenizer_names:
+            sp_tokenizer = sentencepiece.SentencePieceProcessor()
+            raise NotImplementedError()
+            sp_tokenizer.Load()
+            def sp_tokenize(text):
+                return {
+                    'input_ids': sp_tokenizer.EncodeAsIds(text)
+                }
+            tokenizers["sentencepiece"] = sp_tokenize
+        if "sentencepiece_rn" in self.tokenizer_names:
+            sp_tokenizer_rn = sentencepiece.SentencePieceProcessor()
+            raise NotImplementedError()
+            sp_tokenizer_rn.Load()
+            def sp_tokenize_rn(text):
+                text = text.replace("\n", NEWLINE_REP)
+                return {
+                    'input_ids': sp_tokenizer_rn.EncodeAsIds(text)
+                }
+            tokenizers["sentencepiece_rn"] = sp_tokenize_rn
 
         while True:
             x = self.input_queue.get()

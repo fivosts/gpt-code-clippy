@@ -15,7 +15,6 @@ from multiprocessing import cpu_count, Pool
 from tqdm import tqdm
 import argparse
 import subprocess
-from itertools import repeat
 import functools
 
 from hacky_linguist import LANGUAGE_EXTENSIONS
