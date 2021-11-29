@@ -1,3 +1,4 @@
+import re
 import random
 import itertools
 import lxml.etree
@@ -9,6 +10,8 @@ from tokenizers import ByteLevelBPETokenizer
 MAX_DOC_LENGTH = 10_000
 
 NEWLINE_REP = "<|n|>"
+
+SPLIT_LINES = re.compile(f'.*[\r\n]+')
 
 def stackexchange_reader(filename, rng, yield_rate=None, parse_html=True):
 
@@ -48,14 +51,20 @@ def dataset_reader(data_dir, rng, source="github", yield_rate=None):
             yield x['text']
 
 def preprocess_text(text, max_len=MAX_DOC_LENGTH, replace_newline=True):
-    i = 0
-    while i < len(text):
-        piece = text[i:i+max_len]
-        if replace_newline:
+    if replace_newline:
+        i = 0
+        while i < len(text):
+            piece = text[i:i+max_len]
             piece = piece.replace("\n", NEWLINE_REP)
-        if piece:
-            yield piece
-        i += max_len
+            if piece:
+                yield piece
+            i += max_len
+    else:
+        matches = re.findall(SPLIT_LINES, text)
+        if not matches:
+            yield text
+        else:
+            yield from iter(matches)
 
 if __name__ == "__main__":
     import os

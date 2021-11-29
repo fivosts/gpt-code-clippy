@@ -1,3 +1,5 @@
+import re
+import os
 import sys
 import pprint
 import itertools
@@ -5,11 +7,13 @@ from os.path import splitext
 from collections import Counter, defaultdict, namedtuple
 from multiprocessing import Pool, Process, JoinableQueue
 
+from code_clippy_dataset.utils import infer_source_from_data_dir
+
 import tqdm
 import humanize
 import numpy as np
 
-from datasets import load_dataset
+from datasets import load_dataset, load_from_disk
 from transformers import GPT2TokenizerFast, PreTrainedTokenizerFast
 from tokenizers import ByteLevelBPETokenizer
 
@@ -66,14 +70,14 @@ class Worker(Process):
             tokenizers["codet5"] = PreTrainedTokenizerFast(tokenizer_object=codet5_tokenizer_model)
         if "bpe" in self.tokenizer_names:
             our_tokenizer_model = ByteLevelBPETokenizer.from_file(
-                "tokenizers/github-py-js+so_bpe_rn-False/vocab.json",
-                "tokenizers/github-py-js+so_bpe_rn-False/merges.txt",
+                "tokenizers/github-py+so_bpe_rn-False/vocab.json",
+                "tokenizers/github-py+so_bpe_rn-False/merges.txt",
             )
             tokenizers["bpe"] = PreTrainedTokenizerFast(tokenizer_object=our_tokenizer_model)
         if "bpe_rn" in self.tokenizer_names:
             our_tokenizer_model_rn = ByteLevelBPETokenizer.from_file(
-                "tokenizers/github-py-js+so_bpe_rn-True/vocab.json",
-                "tokenizers/github-py-js+so_bpe_rn-True/merges.txt",
+                "tokenizers/github-py+so_bpe_rn-True/vocab.json",
+                "tokenizers/github-py+so_bpe_rn-True/merges.txt",
             )
             our_tokenizer_rn = PreTrainedTokenizerFast(tokenizer_object=our_tokenizer_model_rn)
             def bpe_rn_tokenize(text):
@@ -82,17 +86,19 @@ class Worker(Process):
             tokenizers["bpe_rn"] = bpe_rn_tokenize
         if "sentencepiece" in self.tokenizer_names:
             sp_tokenizer = sentencepiece.SentencePieceProcessor()
-            raise NotImplementedError()
-            sp_tokenizer.Load()
+            SPLIT_LINES = re.compile(f'.*[\r\n]+')
+            sp_tokenizer.Load("tokenizers/github-py+so_spm-rn-False.model")
             def sp_tokenize(text):
+                pieces = re.findall(SPLIT_LINES, text)
+                if not pieces:
+                    pieces = [text]
                 return {
-                    'input_ids': sp_tokenizer.EncodeAsIds(text)
+                    'input_ids': [token for piece in pieces for token in sp_tokenizer.EncodeAsIds(piece)]
                 }
             tokenizers["sentencepiece"] = sp_tokenize
         if "sentencepiece_rn" in self.tokenizer_names:
             sp_tokenizer_rn = sentencepiece.SentencePieceProcessor()
-            raise NotImplementedError()
-            sp_tokenizer_rn.Load()
+            sp_tokenizer.Load("tokenizers/github-py+so_spm-rn-True.model")
             def sp_tokenize_rn(text):
                 text = text.replace("\n", NEWLINE_REP)
                 return {
@@ -298,7 +304,7 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("data_dir")
-    parser.add_argument("--source", default='github')
+    #parser.add_argument("--source", default='github')
     parser.add_argument("--num_items", type=int)
     parser.add_argument("--n_procs", type=int, default=10)
     parser.add_argument("--tokenizer_names", nargs='*', choices=POSSIBLE_TOKENIZERS, default=POSSIBLE_TOKENIZERS)
@@ -310,7 +316,10 @@ if __name__ == "__main__":
     # datasets are hashed based on arguments, which are sensitive to trailing dashes (even though loading is not)
     data_dir = data_dir.rstrip("/")
     print(data_dir)
-    data = load_dataset("code_clippy_dataset", data_dir=data_dir, source=args.source)['train']
+    if os.path.exists(os.path.join(data_dir, "dataset.arrow")):
+        data = load_from_disk(data_dir)
+    else:
+        data = load_dataset("code_clippy_dataset", data_dir=data_dir, source=infer_source_from_data_dir(data_dir))['train']
 
     file_counts, tabulated, sum_stats, mean_stats = tabulate(
         data, tokenizer_names=args.tokenizer_names, n_procs=args.n_procs, max_items=args.num_items
