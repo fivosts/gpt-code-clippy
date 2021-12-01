@@ -23,6 +23,6 @@ data_dir=$1
 python -u dataset_stats_par.py $data_dir \
   --tokenizer_names bpe gpt2 \
   --n_procs 20 \
-  | tee ${data_dir}/size_stats.out
+  | tee ${data_dir}/size_stats_jupyter_proc.out
 
   #--source $source \

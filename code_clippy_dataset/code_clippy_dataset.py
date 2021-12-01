@@ -18,15 +18,20 @@ More to add here.
 """
 
 import io
+from json.decoder import JSONDecodeError
 from typing import List
 import jsonlines
 import zstandard as zstd
 from pathlib import Path
 import os.path
+import json
 
 import datasets
+from code_clippy_dataset.jupyter_notebook_processing import DEFAULT_JUPYTER_OPTIONS_NO_OUTPUTS, notebook_to_text
 
 from hacky_linguist import LANGUAGE_EXTENSIONS
+
+from code_clippy_dataset.utils import BASE_FEATURES, EXTRA_FEATURES
 
 
 # TODO: Add BibTeX citation
@@ -43,63 +48,10 @@ _LICENSE = ""
 
 # TODO: Add link to the official dataset URLs here (once we have those)
 
-BASE_FEATURES = {
-    "id": datasets.Value("int64"),
-    "text": datasets.Value("string"),
-    "repo_name": datasets.Value("string"),
-    "file_name": datasets.Value("string"),
-    "mime_type": datasets.Value("string"),
-    "license": datasets.Value("string"),
-    "repo_language": datasets.Value("string"),
-}
-
-EXTRA_FEATURES = {
-    'github': [
-        "stars",
-    ],
-    'google_code': [
-        "ancestorRepo",
-        "compressed_size",
-        "contentLicense",
-        "creationTime",
-        "hasSource",
-        "imageUrl",
-        "labels",
-        "logoName",
-        "main_common_language",
-        "movedTo",
-        "percents_by_language",
-        "repoType",
-        "stars",
-        "subrepos",
-        "summary",
-        "total_sizes_by_language",
-        "uncompressed_size",
-        "zip_file_size",
-    ],
-    'bitbucket': [
-        "created_on",
-        "full_name",
-        "language",
-        "size",
-        "updated_on",
-        "uuid",
-    ],
-    'gitlab': [
-        "is_fork",
-        "languages",
-        "last_activity_at",
-        "stars",
-        "tags",
-        "url",
-    ]
-}
-
-
 class CodeClippyConfig(datasets.BuilderConfig):
     """BuilderConfig for CodeClippy."""
 
-    def __init__(self, language_filter_type=None, licenses_filter=None, source='github', **kwargs):
+    def __init__(self, language_filter_type=None, licenses_filter=None, source='github', jupyter_options=DEFAULT_JUPYTER_OPTIONS_NO_OUTPUTS, **kwargs):
         """BuilderConfig for CodeClippy.
         Args:
           **kwargs: keyword arguments forwarded to super.
@@ -113,6 +65,7 @@ class CodeClippyConfig(datasets.BuilderConfig):
 
         self.licenses_filter = licenses_filter
         self.source = source
+        self.jupyter_options = jupyter_options
 
 class CodeClippy(datasets.GeneratorBasedBuilder):
     """CodeClippy dataset - opensource code from Github. Scrapped July 7 2021."""
@@ -172,6 +125,9 @@ class CodeClippy(datasets.GeneratorBasedBuilder):
         """Yields examples as (key, example) tuples."""
         id_ = 0
         dctx = zstd.ZstdDecompressor()
+        num_key_errors = 0
+        num_json_errors = 0
+        other_errors = []
         for filepath in filepaths:
             with open(filepath, "rb") as f:
                 f = dctx.stream_reader(f)
@@ -204,5 +160,25 @@ class CodeClippy(datasets.GeneratorBasedBuilder):
                             license = "+".join(meta["detected_licenses"])
                             del meta["detected_licenses"]
                             meta["license"] = license
-                        yield id_, {"id": id_, "text": line["text"], **meta}
+                        text = line["text"]
+                        valid = True
+                        if extension == '.ipynb':
+                            try:
+                                notebook_dictionary = json.loads(text)
+                                text = notebook_to_text(notebook_dictionary, self.config.jupyter_options)
+                            except KeyError as e:
+                                valid = False
+                                num_key_errors += 1
+                                # print(f"KeyError({e})")
+                            except JSONDecodeError as e:
+                                valid = False
+                                num_json_errors += 1
+                            except Exception as e:
+                                valid = False
+                                other_errors.append(e)
+                        if valid:
+                            yield id_, {"id": id_, "text": text, **meta}
                         id_ += 1
+        print(f"{num_json_errors} json errors")
+        print(f"{num_json_errors} key errors")
+        print(f"{len(other_errors)} other errors")

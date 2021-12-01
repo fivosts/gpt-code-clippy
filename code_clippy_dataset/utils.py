@@ -1,10 +1,62 @@
 import re
 import numpy as np
-from code_clippy_dataset.code_clippy_dataset import BASE_FEATURES, EXTRA_FEATURES
+import random
+import datasets
+
+BASE_FEATURES = {
+    "id": datasets.Value("int64"),
+    "text": datasets.Value("string"),
+    "repo_name": datasets.Value("string"),
+    "file_name": datasets.Value("string"),
+    "mime_type": datasets.Value("string"),
+    "license": datasets.Value("string"),
+    "repo_language": datasets.Value("string"),
+}
+
+EXTRA_FEATURES = {
+    'github': [
+        "stars",
+    ],
+    'google_code': [
+        "ancestorRepo",
+        "compressed_size",
+        "contentLicense",
+        "creationTime",
+        "hasSource",
+        "imageUrl",
+        "labels",
+        "logoName",
+        "main_common_language",
+        "movedTo",
+        "percents_by_language",
+        "repoType",
+        "stars",
+        "subrepos",
+        "summary",
+        "total_sizes_by_language",
+        "uncompressed_size",
+        "zip_file_size",
+    ],
+    'bitbucket': [
+        "created_on",
+        "full_name",
+        "language",
+        "size",
+        "updated_on",
+        "uuid",
+    ],
+    'gitlab': [
+        "is_fork",
+        "languages",
+        "last_activity_at",
+        "stars",
+        "tags",
+        "url",
+    ]
+}
+
 
 TOKEN_RE = re.compile(r"\W+")
-
-UNLIMITED_LINE_LENGTH_EXTENSIONS = {'.ipynb'}
 
 def strip_trailing_slash(path):
     while path[-1] == '/':
@@ -61,3 +113,22 @@ def standardize(dataset, verbose=True):
     if verbose:
         print(f"resulting dataset features: {dataset.features}")
     return dataset
+
+
+def make_tagged(tag, inner, attributes={}, insert_newlines=True, attribute_drop_probability=None):
+    if attributes:
+        attr_strs = [f'{k}={v}' for k, v in attributes.items()]
+        if attribute_drop_probability is not None:
+            assert 0 <= attribute_drop_probability <= 1.0
+            attr_strs = [x for x in attr_strs if random.random() > attribute_drop_probability]
+    else:
+        attr_strs = []
+    if attr_strs:
+        random.shuffle(attr_strs)
+        attr_string = f" {' '.join(attr_strs)}"
+    else:
+        attr_string = ''
+    if insert_newlines:
+        return f'<{tag}{attr_string}>\n{inner}\n</{tag}>'
+    else:
+        return f'<{tag}{attr_string}>{inner}</{tag}>'
