@@ -12,9 +12,8 @@ import os
 import functools
 
 import numpy as np
-from datasets import load_dataset
 
-from code_clippy_dataset.utils import strip_trailing_slash, infer_source_from_data_dir
+from code_clippy_dataset.utils import strip_trailing_slash, load_dataset_infer
 
 NON_ALPHA_NUM_RE = re.compile(r"\W+")
 NEWLINE_RE = re.compile(r"[\r\n]+")
@@ -133,7 +132,7 @@ if __name__ == "__main__":
         nargs='*',
         default=DEFAULT_EXCLUDE_STRINGS,
     )
-    parser.add_argument("--source")
+    # parser.add_argument("--source")
     parser.add_argument("--num_proc", type=int, default=20)
 
     args = parser.parse_args()
@@ -142,13 +141,7 @@ if __name__ == "__main__":
     for data_dir in args.data_dirs:
         data_dir = strip_trailing_slash(data_dir)
 
-        if args.source is None:
-            source = infer_source_from_data_dir(data_dir)
-            print(f"inferred source {source} from path {data_dir}")
-        else:
-            source = args.source
-
-        dataset = load_dataset("code_clippy_dataset", source=source, data_dir=data_dir)['train']
+        dataset = load_dataset_infer(data_dir)
         len_before_filtering = len(dataset)
 
         if args.repos_and_basenames_to_exclude_paths:

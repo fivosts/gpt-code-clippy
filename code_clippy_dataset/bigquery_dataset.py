@@ -112,6 +112,7 @@ class BigQuery(datasets.GeneratorBasedBuilder):
         id_ = 0
         num_key_errors = 0
         num_json_errors = 0
+        num_missing_content = 0
         other_errors = []
         for filepath in filepaths:
             with gzip.open(filepath, "rb") as f:
@@ -123,6 +124,9 @@ class BigQuery(datasets.GeneratorBasedBuilder):
                     filename = os.path.basename(path)
                     _, extension = os.path.splitext(filename)
 
+                    if 'content' not in record:
+                        num_missing_content += 1
+                        continue
                     text = record['content']
 
                     valid = True
@@ -153,6 +157,7 @@ class BigQuery(datasets.GeneratorBasedBuilder):
                             "size": int(record["size"]),
                         }
                         id_ += 1
+        print(f"{num_missing_content} records with missing content")
         print(f"{num_json_errors} json errors")
         print(f"{num_json_errors} key errors")
         print(f"{len(other_errors)} other errors")

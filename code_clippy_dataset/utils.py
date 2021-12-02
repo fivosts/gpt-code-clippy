@@ -2,6 +2,8 @@ import re
 import numpy as np
 import random
 import datasets
+import os
+from datasets import load_from_disk, load_dataset
 
 BASE_FEATURES = {
     "id": datasets.Value("int64"),
@@ -65,6 +67,8 @@ def strip_trailing_slash(path):
 
 def infer_source_from_data_dir(data_dir):
     sources = []
+    if 'bigquery' in data_dir:
+        sources.append('bigquery')
     if 'github' in data_dir:
         sources.append('github')
     if 'google-code' in data_dir or 'google_code' in data_dir:
@@ -76,6 +80,17 @@ def infer_source_from_data_dir(data_dir):
     if len(sources) != 1:
         raise ValueError(f"could not infer source from path {data_dir}")
     return sources[0]
+
+def load_dataset_infer(data_dir):
+    if os.path.exists(os.path.join(data_dir, "dataset.arrow")):
+        dataset = load_from_disk(data_dir)
+    else:
+        source = infer_source_from_data_dir(data_dir)
+        if source == 'bigquery':
+            dataset = datasets.load_dataset("code_clippy_dataset/bigquery_dataset.py", data_dir=data_dir, split="train")
+        else:
+            dataset = datasets.load_dataset("code_clippy_dataset", data_dir=data_dir, split="train", source=source)
+    return dataset
 
 def standardize(dataset, verbose=True):
     """ remove all source-specific columns, keeping only those that occur in all repo sources.

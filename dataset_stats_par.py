@@ -7,7 +7,7 @@ from os.path import splitext
 from collections import Counter, defaultdict, namedtuple
 from multiprocessing import Pool, Process, JoinableQueue
 
-from code_clippy_dataset.utils import infer_source_from_data_dir
+from code_clippy_dataset.utils import infer_source_from_data_dir, load_dataset_infer
 
 import tqdm
 import humanize
@@ -27,7 +27,8 @@ from hacky_linguist import COMMON_LANGUAGES, EXTENSION_TO_LANGUAGE
 ADD_PREFIX_SPACE = False
 
 #LANGUAGE_SOURCES = ['repo_language', 'guesslang', 'filename_extension']
-LANGUAGE_SOURCES = ['repo_language', 'filename_extension', 'linguist']
+#LANGUAGE_SOURCES = ['repo_language', 'filename_extension', 'linguist']
+LANGUAGE_SOURCES = ['linguist']
 
 POSSIBLE_TOKENIZERS = ["gpt2", "codet5", "bpe", "bpe_rn", "sentencepiece", "sentencepiece_rn"]
 
@@ -316,12 +317,10 @@ if __name__ == "__main__":
     # datasets are hashed based on arguments, which are sensitive to trailing dashes (even though loading is not)
     data_dir = data_dir.rstrip("/")
     print(data_dir)
-    if os.path.exists(os.path.join(data_dir, "dataset.arrow")):
-        data = load_from_disk(data_dir)
-    else:
-        data = load_dataset("code_clippy_dataset", data_dir=data_dir, source=infer_source_from_data_dir(data_dir))['train']
+
+    dataset = load_dataset_infer(data_dir)
 
     file_counts, tabulated, sum_stats, mean_stats = tabulate(
-        data, tokenizer_names=args.tokenizer_names, n_procs=args.n_procs, max_items=args.num_items
+        dataset, tokenizer_names=args.tokenizer_names, n_procs=args.n_procs, max_items=args.num_items
     )
     display_counts(file_counts, tabulated, sum_stats, mean_stats)
