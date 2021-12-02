@@ -1,30 +1,18 @@
 from collections import namedtuple
 import functools
-from markdown import Markdown
 from io import StringIO
 import random
 
-from utils import make_tagged
+#from utils import make_tagged
+from code_clippy_dataset.utils import make_tagged
 
-# https://stackoverflow.com/a/54923798/1319683
-def unmark_element(element, stream=None):
-    if stream is None:
-        stream = StringIO()
-    if element.text:
-        stream.write(element.text)
-    for sub in element:
-        unmark_element(sub, stream)
-    if element.tail:
-        stream.write(element.tail)
-    return stream.getvalue()
+import mistune
+from code_clippy_dataset.render_text_only import TextRenderer
 
-# patching Markdown
-Markdown.output_formats["plain"] = unmark_element
-__md = Markdown(output_format="plain")
-__md.stripTopLevelTags = False
+markdown = mistune.Markdown(renderer=TextRenderer())
 
 def unmark(text):
-    return __md.convert(text)
+    return markdown(text)
 
 JupyterOptions = namedtuple("JupyterOptions", [
     # Set[str]. include cells if they have a celltype in this set. Options: {'code', 'markdown', 'raw'}
