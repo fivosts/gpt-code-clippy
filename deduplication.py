@@ -134,7 +134,7 @@ if __name__ == "__main__":
         # assert len(deduplicated_dataset) == n_marginal_unique
         print(f"{len(dataset)} entries before deduplication; read from {data_dir}")
         print(f"{len(deduplicated_dataset)} entries ({len(deduplicated_dataset)/len(dataset)*100:.2f}%) after deduplication; writing to {output_dir}")
-        print(f"excluded {len(files_excluded_because_of_repos)} because their were in repo exclusion lists")
+        print(f"excluded {len(files_excluded_because_of_repos)} files because their repos were in repo exclusion lists")
 
         if args.save_format == 'lm_archive':
             ar = lm_dataformat.Archive(output_dir)
