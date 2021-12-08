@@ -49,6 +49,23 @@ LICENSE_STANDARDIZATION = {
 
 MIME = magic.Magic(mime=True)
 
+def get_output(command, cwd):
+    return subprocess.run(command, shell=True, cwd=cwd, stdout=subprocess.PIPE).stdout.decode("utf-8")
+
+def get_git_commits(repodir):
+    lines = get_output(
+        "git log --pretty=oneline", cwd=repodir,
+    ).splitlines()
+    hashes = [line.split()[0] for line in lines]
+    return hashes
+
+def get_git_date(repodir, commit=None):
+    command = 'git show -s --format="%ci"'
+    if commit:
+        command += f" {commit}"
+    line = get_output(command, repodir)
+    return line.strip()
+
 class TimeoutError(Exception):
     pass
 
@@ -136,7 +153,9 @@ def remove_prefix(string, prefix):
     assert string.startswith(prefix)
     return string[len(prefix):]
 
-def _process_repo(repo_data, repodir, license_filter, repo_type):
+def _process_repo(repo_data, repodir, license_filter, repo_type, extra_tags=None, remove_repo=True):
+    if extra_tags is None:
+        extra_tags = {}
     out = None
     # get metadata
     meta = repo_data.copy()
@@ -195,21 +214,22 @@ def _process_repo(repo_data, repodir, license_filter, repo_type):
                     text = None
 
                 if text is not None and text.strip():
-                    meta_updated = dict(file_name=short_file_path, mime_type=mime_type, **meta)
+                    meta_updated = dict(file_path=full_file_path, file_name=short_file_path, mime_type=mime_type, **meta, **extra_tags)
                     if out is None:
                         out = [[text, meta_updated]]
                     else:
                         out.append([text, meta_updated])
-        shutil.rmtree(repodir, ignore_errors=True)
+        #shutil.rmtree(repodir, ignore_errors=True)
     except TimeoutError:
         print(f"Processing for {name} timed out")
     except Exception as e:
         print(e)
     return out, meta
 
-def process_repo_list(repo_data, clone_timeout, processing_timeout, source='github', license_filter=None):
+def process_repo_list(repo_data, clone_timeout, processing_timeout, source='github', license_filter=None, historic_checkout=False):
     out = None
     meta = repo_data
+    repodir = None
     try:
         name = repo_data['name']
         is_git = True
@@ -230,10 +250,15 @@ def process_repo_list(repo_data, clone_timeout, processing_timeout, source='gith
             rootfolder = os.path.join(".tmp", username)
             repodir = os.path.join(rootfolder, projectname)
 
-            command = f'GIT_TERMINAL_PROMPT=0 git clone --depth 1 --single-branch {base_url} {projectname}'
+            if historic_checkout:
+                command = f'GIT_TERMINAL_PROMPT=0 git clone --single-branch {base_url} {projectname}'
+            else:
+                # clones master branch of repos with depth 1 (most recent commit only), ignoring any terminal prompts
+                command = f'GIT_TERMINAL_PROMPT=0 git clone --depth 1 --single-branch {base_url} {projectname}'
 
             repo_type = 'git'
         else:
+            assert not historic_checkout
             rootfolder = os.path.join(".tmp", name)
             repodir = os.path.join(rootfolder, name)
 
@@ -241,7 +266,6 @@ def process_repo_list(repo_data, clone_timeout, processing_timeout, source='gith
 
             repo_type = repo_data['repoType']
         os.makedirs(rootfolder, exist_ok=True)
-        # clones master branch of repos with depth 1 (most recent commit only), ignoring any terminal prompts
         p = subprocess.Popen(
             command,
             shell=True,
@@ -253,17 +277,57 @@ def process_repo_list(repo_data, clone_timeout, processing_timeout, source='gith
         except subprocess.TimeoutExpired:
             print(f'download for {name} timed out ')
             p.kill()
-        if repo_type == 'git':
-            # not strictly necessary since we'll skip these directories in the exclude list
-            shutil.rmtree(f'{repodir}/.git', ignore_errors=True)
-        elif repo_type == 'hg':
-            shutil.rmtree(f'{repodir}/.hg', ignore_errors=True)
+        # if repo_type == 'git':
+        #     # not strictly necessary since we'll skip these directories in the exclude list
+        #     shutil.rmtree(f'{repodir}/.git', ignore_errors=True)
+        # elif repo_type == 'hg':
+        #     shutil.rmtree(f'{repodir}/.hg', ignore_errors=True)
         # extracts text files from repo and returns them as list : [[text, metadata], ... ]
-        out, meta = timeout(_process_repo, args=(repo_data, repodir, license_filter, repo_type), timeout_duration=processing_timeout)
+        if is_git:
+            commits = get_git_commits(repodir)
+            if commits:
+                this_commit = commits[0]
+                extra_tags = {
+                    'commit': commits[0],
+                    'commit_date': get_git_date(repodir, this_commit),
+                    'commits_in_past': 0,
+                }
+            else:
+                extra_tags = {}
+        else:
+            extra_tags = {}
+        out, meta = timeout(_process_repo, args=(repo_data, repodir, license_filter, repo_type, extra_tags), timeout_duration=processing_timeout)
+        if is_git and out is not None and historic_checkout:
+            commits_in_past = len(commits)//2
+            if commits_in_past > 0:
+                middle_commit = commits[commits_in_past]
+                middle_extra_tags = {
+                    'commit': middle_commit,
+                    'commit_date': get_git_date(repodir, middle_commit),
+                    'commits_in_past': commits_in_past,
+                }
+                proc = subprocess.run(f'git checkout {middle_commit}', shell=True, cwd=os.path.join(os.getcwd(), repodir), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                if proc.returncode == 0:
+                    new_out, new_meta = timeout(_process_repo, args=(repo_data, repodir, license_filter, repo_type, middle_extra_tags), timeout_duration=processing_timeout)
+                    if new_out is not None:
+                        #print(f"successful historical checkout of commit {middle_commit} for {name}")
+                        out += new_out
+                    else:
+                        #print(f"could not do historical checkout of commit {middle_commit} for {name}")
+                        out = None
+            else:
+                out = None
+
     except Exception as e:
         print(e)
+        print(f"error dir: {repodir}")
         # if verbose:
         #     print(e)
+    if repodir is not None:
+        try:
+            shutil.rmtree(repodir, ignore_errors=True)
+        except Exception as e:
+            print(e)
     return out, meta
 
 
@@ -295,6 +359,7 @@ def process_args():
     parser.add_argument('--min_language_size', type=int)
     parser.add_argument('-v', '--verbose', help='if flag is present, print errors', action='store_true')
     parser.add_argument('--open_source_only', action='store_true')
+    parser.add_argument('--historic_checkout', action='store_true')
     return parser.parse_args()
 
 
@@ -412,7 +477,7 @@ if __name__ == '__main__':
     # TODO: also include language filter
     processing_function = functools.partial(
         process_repo_list, clone_timeout=args.clone_timeout, processing_timeout=args.processing_timeout,
-        source=args.source, license_filter=license_filter,
+        source=args.source, license_filter=license_filter, historic_checkout=args.historic_checkout,
     )
 
     for count, chunk in enumerate(pbar):
