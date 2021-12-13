@@ -153,6 +153,11 @@ class CodeClippy(datasets.GeneratorBasedBuilder):
                             meta["repo_name"] = meta["name"]
                         del meta["name"]
 
+                    for key in ["file_path", "commit_date", "commit", "commits_in_past"]:
+                        # for backward compatibility, since we didn't store this info in all dumps
+                        if key in meta:
+                            del meta[key]
+
                     if extension in LANGUAGE_EXTENSIONS:
                         if "detected_licenses" in meta:
                             # if multiple licenses, just concatenate them

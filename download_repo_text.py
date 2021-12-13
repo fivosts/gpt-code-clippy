@@ -19,6 +19,8 @@ import functools
 
 from hacky_linguist import LANGUAGE_EXTENSIONS
 
+MAX_TEXT_SIZE = 10_000_000
+
 OPEN_SOURCE_LICENSES = {
     # gitlab
     'mit', 'apache-2.0', 'bsd-3-clause', 'bsd-3-clause-clear', 'bsd-2-clause', 
@@ -213,7 +215,7 @@ def _process_repo(repo_data, repodir, license_filter, repo_type, extra_tags=None
                     print(e)
                     text = None
 
-                if text is not None and text.strip():
+                if text is not None and text.strip() and len(text) < MAX_TEXT_SIZE:
                     meta_updated = dict(file_path=full_file_path, file_name=short_file_path, mime_type=mime_type, **meta, **extra_tags)
                     if out is None:
                         out = [[text, meta_updated]]

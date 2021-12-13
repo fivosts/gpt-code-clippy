@@ -26,7 +26,9 @@ def get_signatures(examples):
     ]
     return {"signature": signatures, "repo_and_filename": repos_and_filenames}
 
-def check_uniques(example, unique_signatures_: Set[str], unique_repos_and_filenames_: Set[str], exclude_duplicate_repos_and_filenames: bool = False, repos_to_exclude=None, files_excluded_because_of_repos_=None):
+def check_uniques(example, unique_signatures_: Set[str], unique_repos_and_filenames_: Set[str], exclude_duplicate_repos_and_filenames: bool = False, repos_to_exclude=None, 
+                  files_excluded_because_of_repos_=None, files_excluded_because_of_repos_and_filenames_=None,
+                 files_excluded_because_of_sigs_=None):
     """Have we seen this example before? Updates unique_signatures_ and unique_repos_and_filesnames"""
     signature = example["signature"]
     repo_and_filename = example["repo_and_filename"]
@@ -35,7 +37,15 @@ def check_uniques(example, unique_signatures_: Set[str], unique_repos_and_filena
         if files_excluded_because_of_repos_ is not None:
             files_excluded_because_of_repos_.append(repo_and_filename)
         return False
-    found = (signature in unique_signatures_) or (exclude_duplicate_repos_and_filenames and (repo_and_filename in unique_repos_and_filenames_))
+    found = False
+    if signature in unique_signatures_:
+        found = True
+        if files_excluded_because_of_sigs_ is not None:
+            files_excluded_because_of_sigs_.append((repo_and_filename, signature))
+    if exclude_duplicate_repos_and_filenames and (repo_and_filename in unique_repos_and_filenames_):
+        found = True
+        if files_excluded_because_of_repos_and_filenames_ is not None:
+            files_excluded_because_of_repos_and_filenames_.append(repo_and_filename)
     if not found:
         unique_signatures_.add(signature)
         unique_repos_and_filenames_.add(repo_and_filename)
@@ -49,20 +59,23 @@ if __name__ == "__main__":
     parser.add_argument("--num_proc", type=int, default=10)
     # parser.add_argument("--source", choices=['github', 'google_code', 'bitbucket', 'gitlab'])
     parser.add_argument("--output_dir_exist_ok", action="store_true")
-    parser.add_argument("--save_format", choices=["lm_archive", "huggingface"], default='lm_archive')
+    #parser.add_argument("--save_format", choices=["lm_archive", "huggingface"], default='huggingface')
     parser.add_argument("--exclude_duplicate_repos_and_filenames", action="store_true")
     parser.add_argument("--repo_exclude_lists", nargs="*")
+    parser.add_argument("--infer_repo_exclude_lists", action='store_true', help='rather than using --repo_exclude_lists, load files from "repos_processed.txt" in the directory above each processed_data_dir from previously processed data dirs in the signatures file. This will exclude any repos that have already been processed but were double-included')
+    parser.add_argument("--debug", action='store_true', help='skip write and drop into a pdb shell')
     args = parser.parse_args()
     print(' '.join(sys.argv))
 
+    repos_to_exclude = set()
+
+    def augment_repos_to_exclude_from_file(fname):
+        with open(fname, 'r') as f:
+            repos_to_exclude.update(line.strip() for line in f)
+
     if args.repo_exclude_lists:
-        repos_to_exclude = set()
         for fname in args.repo_exclude_lists:
-            with open(fname, 'r') as f:
-                repos_to_exclude.update(line.strip() for line in f)
-        print(f"will exclude any repos from set with {len(repos_to_exclude)} repos")
-    else:
-        repos_to_exclude = None
+            augment_repos_to_exclude_from_file(fname)
 
     def write_signature_file(unique_signatures, processed_data_dirs, repos_and_basenames):
         print(f"writing to signature file {args.signature_file}")
@@ -82,21 +95,30 @@ if __name__ == "__main__":
                 unique_repos_and_basenames = d['repos_and_basenames']
             else:
                 unique_repos_and_basenames = set()
+            if args.infer_repo_exclude_lists:
+                assert not args.repo_exclude_lists
+                for path in processed_data_dirs:
+                    fname = os.path.join(path.rstrip("/").rstrip("data"), "repos_processed.txt")
+                    augment_repos_to_exclude_from_file(fname)
     else:
         unique_signatures = set()
         processed_data_dirs = []
         unique_repos_and_basenames = set()
+
     print(f"initial number of signatures: {len(unique_signatures)}")
+
     if processed_data_dirs:
         print(f"previously procssed data_dirs:")
         print('\n'.join(processed_data_dirs))
+
+    print(f"will exclude any repos from set with {len(repos_to_exclude)} repos")
 
     for data_dir in args.data_dirs:
         data_dir = strip_trailing_slash(data_dir)
 
         output_dir = data_dir + "_dedup"
         print(f"deduplicating to directory {output_dir}")
-        os.makedirs(output_dir, exist_ok=args.output_dir_exist_ok)
+        os.makedirs(output_dir, exist_ok=(args.output_dir_exist_ok or args.debug))
 
         print(f"loading {data_dir}")
         dataset = load_dataset_infer(data_dir)
@@ -116,41 +138,53 @@ if __name__ == "__main__":
 
         # assert n_marginal_unique == len(marginal_unique_in_this)
 
-        print(f"{len(unique_signatures)} unique signatures, previously")
-        print(f"{len(unique_repos_and_basenames)} unique (repo_name, base_filename), previously")
+        print(f"{len(unique_signatures):_} unique signatures, previously")
+        print(f"{len(unique_repos_and_basenames):_} unique (repo_name, base_filename), previously")
 
         files_excluded_because_of_repos = []
+        files_excluded_because_of_sigs = []
+        files_excluded_because_of_repos_and_filenames = []
 
         deduplicated_dataset = dataset.filter(check_uniques, 
                                               fn_kwargs={"unique_signatures_": unique_signatures,
                                                          "unique_repos_and_filenames_": unique_repos_and_basenames,
                                                          "exclude_duplicate_repos_and_filenames": args.exclude_duplicate_repos_and_filenames,
                                                          "repos_to_exclude": repos_to_exclude,
-                                                         "files_excluded_because_of_repos_": files_excluded_because_of_repos})
+                                                         "files_excluded_because_of_repos_": files_excluded_because_of_repos,
+                                                         "files_excluded_because_of_sigs_": files_excluded_because_of_sigs,
+                                                         "files_excluded_because_of_repos_and_filenames_": files_excluded_because_of_repos_and_filenames,
+                                                        })
 
-        print(f"{len(unique_signatures)} unique signatures, afterward")
-        print(f"{len(unique_repos_and_basenames)} unique (repo_name, base_filename), afterward")
+        print(f"{len(unique_signatures):_} unique signatures, afterward")
+        print(f"{len(unique_repos_and_basenames):_} unique (repo_name, base_filename), afterward")
 
         # assert len(deduplicated_dataset) == n_marginal_unique
-        print(f"{len(dataset)} entries before deduplication; read from {data_dir}")
-        print(f"{len(deduplicated_dataset)} entries ({len(deduplicated_dataset)/len(dataset)*100:.2f}%) after deduplication; writing to {output_dir}")
-        print(f"excluded {len(files_excluded_because_of_repos)} files because their repos were in repo exclusion lists")
+        print(f"{len(dataset):_} entries before deduplication; read from {data_dir}")
+        print(f"{len(deduplicated_dataset):_} entries ({len(deduplicated_dataset)/len(dataset)*100:.2f}%) after deduplication; writing to {output_dir}")
+        print(f"excluded {len(files_excluded_because_of_sigs):_} files because their signatures matched previously found signatures")
+        print(f"excluded {len(files_excluded_because_of_repos):_} files because their repos were in repo exclusion lists")
+        print(f"excluded {len(files_excluded_because_of_repos_and_filenames):_} files because their repos and filenames were in repo and filename exclusion lists")
 
-        if args.save_format == 'lm_archive':
-            ar = lm_dataformat.Archive(output_dir)
+        # now that we are preprocssing the jupyter notebooks, force saving to a HF dataset
+        # if args.save_format == 'lm_archive':
+        #     ar = lm_dataformat.Archive(output_dir)
 
-            for i, example in enumerate(deduplicated_dataset):
-                code = example["text"]
-                del example["text"]
-                del example["signature"]
-                del example["repo_and_filename"]
-                ar.add_data(code, meta=example)
-                if i > 0 and i % args.archive_commit_freq == 0:
-                    ar.commit()
-            ar.commit()
-        else:
-            deduplicated_dataset.remove_columns(["signature", "repo_and_filename"])
-            deduplicated_dataset.save_to_disk(output_dir)
+        #     for i, example in enumerate(deduplicated_dataset):
+        #         code = example["text"]
+        #         del example["text"]
+        #         del example["signature"]
+        #         del example["repo_and_filename"]
+        #         ar.add_data(code, meta=example)
+        #         if i > 0 and i % args.archive_commit_freq == 0:
+        #             ar.commit()
+        #     ar.commit()
+        # else:
+        deduplicated_dataset.remove_columns(["signature", "repo_and_filename"])
         processed_data_dirs.append(data_dir)
-        print("writing signature file")
-        write_signature_file(unique_signatures, processed_data_dirs, unique_repos_and_basenames)
+        if args.debug:
+            from IPython import embed
+            embed()
+        else:
+            print("writing signature file")
+            deduplicated_dataset.save_to_disk(output_dir)
+            write_signature_file(unique_signatures, processed_data_dirs, unique_repos_and_basenames)

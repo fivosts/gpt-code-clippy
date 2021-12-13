@@ -1,6 +1,6 @@
 #!/bin/bash
 
-data_dir=$1
+#data_dir=$1
 # source=$2
 
 # if [ -z $source ]
@@ -20,9 +20,12 @@ data_dir=$1
 #   --n_procs 20 \
 #   | tee ${data_dir}/size_stats_bpe.out
 
-python -u dataset_stats_par.py $data_dir \
-  --tokenizer_names bpe gpt2 \
-  --n_procs 20 \
-  | tee ${data_dir}/size_stats_jupyter_proc.out
+for data_dir in $@
+do
+  python -u dataset_stats_par.py $data_dir \
+    --tokenizer_names bpe gpt2 \
+    --n_procs 20 \
+    | tee ${data_dir}/size_stats_jupyter_proc.out
+done
 
   #--source $source \
