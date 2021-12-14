@@ -73,9 +73,12 @@ def get_license_using_api(repo_name):
             API_REQUESTS = 0
         except Exception as e:
             print(e)
-            return None
+            return 'none'
 
-    return response.license.key
+    if response.license is not None:
+        return response.license.key
+    else:
+        return 'none'
 
 def detect(license_text):
     license_text = standardize(license_text)

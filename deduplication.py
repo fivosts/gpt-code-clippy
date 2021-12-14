@@ -99,7 +99,10 @@ if __name__ == "__main__":
                 assert not args.repo_exclude_lists
                 for path in processed_data_dirs:
                     fname = os.path.join(path.rstrip("/").rstrip("data"), "repos_processed.txt")
-                    augment_repos_to_exclude_from_file(fname)
+                    if os.path.exists(fname):
+                        augment_repos_to_exclude_from_file(fname)
+                    else:
+                        print(f"{fname} does not exist; skipping inferred repo list for this dataset")
     else:
         unique_signatures = set()
         processed_data_dirs = []

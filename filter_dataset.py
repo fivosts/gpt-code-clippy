@@ -36,9 +36,11 @@ def annotate_record(record, strings_to_exclude: List[str] = None, repos_and_base
     extension = splitext(record["file_name"])[-1]
     basename = record["file_name"].split('/')[-1]
 
+    repo_name = record["repo_name"].lower()
+
     annotations = {}
 
-    annotations['excluded_repo_and_basename'] = repos_and_basenames_to_exclude is not None and (record["repo_name"], basename) in repos_and_basenames_to_exclude
+    annotations['excluded_repo_and_basename'] = repos_and_basenames_to_exclude is not None and (repo_name, basename) in repos_and_basenames_to_exclude
 
     line_lengths = np.array([len(l) for l in NEWLINE_RE.split(text)])
     annotations['max_line_length'] = line_lengths.max()
@@ -72,6 +74,8 @@ def keep_record(record,
     extension = splitext(record["file_name"])[-1]
     basename = record["file_name"].split('/')[-1]
 
+    repo_name = record["repo_name"].lower()
+
     if len(text) == 0:
         print(f'empty record {record["repo_name"]}: {record["file_name"]}')
         return False
@@ -79,10 +83,10 @@ def keep_record(record,
     if extension == '.ipynb':
         return True
 
-    if repos_and_basenames_to_exclude is not None and (record["repo_name"], basename) in repos_and_basenames_to_exclude:
+    if repos_and_basenames_to_exclude is not None and (repo_name, basename) in repos_and_basenames_to_exclude:
         # tqdm.tqdm.write(f"excluding {(record['repo_name'], basename)}")
         return False
-    if repos_to_exclude is not None and record["repo_name"] in repos_to_exclude:
+    if repos_to_exclude is not None and repo_name in repos_to_exclude:
         return False
     if (maximum_line_length is not None or maximum_average_line_length is not None) and extension not in UNLIMITED_LINE_LENGTH_EXTENSIONS:
         line_lengths = np.array([len(l) for l in NEWLINE_RE.split(text)])
@@ -163,6 +167,7 @@ if __name__ == "__main__":
                     has_extension = False
                     # sanity check the ordering: repo names should be in format name/repo; some filenames should have an extension
                     for repo_name, path in csv.reader(f):
+                        repo_name = repo_name.lower()
                         assert len(repo_name.split('/')) == 2, repo_name
                         basename = os.path.basename(path)
                         if '.' in basename:
@@ -178,10 +183,9 @@ if __name__ == "__main__":
             for fname in args.repos_to_exclude_paths:
                 with open(fname) as f:
                     this_repos_to_exclude = set()
-                    # sanity check the ordering: repo names should be in format name/repo; some filenames should have an extension
-                    for repo_name in csv.reader(f):
+                    for repo_name, in csv.reader(f):
                         assert len(repo_name.split('/')) == 2, repo_name
-                        this_repos_to_exclude.add(repo_name)
+                        this_repos_to_exclude.add(repo_name.lower())
                     repos_to_exclude.update(this_repos_to_exclude)
         else:
             repos_to_exclude = None
@@ -205,6 +209,6 @@ if __name__ == "__main__":
         dataset_filtered = dataset.filter(predicate, num_proc=args.num_proc)
 
         print(f"retained {len(dataset_filtered)} / {len(dataset)} records ({len(dataset_filtered)/len(dataset)*100:.2f}%)")
-        output_dir = data_dir + "_filtered_mwcf-0.4_mll-3000_pandoc"
+        output_dir = data_dir + "_filtered_mwcf-0.4_mll-3000_pandoc_csn"
         print(f"deduplicating to directory {output_dir}")
         dataset_filtered.save_to_disk(output_dir)
