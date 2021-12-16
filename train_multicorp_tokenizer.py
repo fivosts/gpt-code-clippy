@@ -4,6 +4,8 @@ import itertools
 import lxml.etree
 import tqdm
 from datasets import load_dataset
+from code_clippy_dataset.utils import load_dataset_infer
+
 import sentencepiece as spm
 from tokenizers import ByteLevelBPETokenizer
 
@@ -45,7 +47,7 @@ def stackexchange_reader(filename, rng, yield_rate=None, parse_html=True):
 def dataset_reader(data_dir, rng, source="github", yield_rate=None):
     # datasets are hashed based on arguments, which are sensitive to trailing dashes (even though loading is not)
     data_dir = data_dir.rstrip("/")
-    data = load_dataset("code_clippy_dataset", source=source, data_dir=data_dir)['train']
+    data = load_dataset_infer(data_dir)
     for x in tqdm.tqdm(data, ncols=80, desc=data_dir):
         if yield_rate is None or rng.random() <= yield_rate:
             yield x['text']
@@ -80,13 +82,14 @@ if __name__ == "__main__":
     parser.add_argument("--tokenizer_type", choices=['sentencepiece', 'byte_level_bpe'], default='byte_level_bpe')
     parser.add_argument("--replace_newline", action='store_true')
     parser.add_argument("--model_prefix",  default="tokenizers/github-py+so")
+    parser.add_argument("--bpe_pretokenizer_split_newlines_only",  action="store_true")
     args = parser.parse_args()
     pprint.pprint(vars(args))
 
     # directory and number of files to take
     data_dirs = [
-        ("/private/home/dpf/data/github/python_forkless_open-source_2star+/data_dedup_filtered/", args.per_dir_file_limit),
-        ("/private/home/dpf/data/github/python_forkless_open-source_1star/data_dedup_filtered/", args.per_dir_file_limit),
+        ("/private/home/dpf/data/github/python_forkless_open-source_2star+/data_dedup_filtered_mwcf-0.4_mll-3000_pandoc_csn/", args.per_dir_file_limit),
+        ("/private/home/dpf/data/github/python_forkless_open-source_1star/data_dedup_filtered_mwcf-0.4_mll-3000_pandoc_csn/", args.per_dir_file_limit),
         #("/private/home/dpf/data/github/javascript_forkless_open-source/data_dedup_filtered/", args.per_dir_file_limit),
     ]
 
@@ -118,7 +121,7 @@ if __name__ == "__main__":
         piece for generator in generators
         for text in generator
         # since \n gets expanded, add in some buffer room by making pre-expansion chunks substantially smaller than MAX_DOC_LEN
-        for piece in preprocess_text(text, max_len=MAX_DOC_LENGTH // 3, replace_newline=replace_newline)
+        for piece in preprocess_text(text, max_len=MAX_DOC_LENGTH // 3 if replace_newline else MAX_DOC_LENGTH, replace_newline=replace_newline)
     )
 
     if replace_newline:
@@ -129,9 +132,12 @@ if __name__ == "__main__":
     user_defined_symbols += ['<|endoftext|>', '<|pad|>', '<|mask|>']
 
     if args.tokenizer_type == "byte_level_bpe":
-        tokenizer = ByteLevelBPETokenizer()
+        tokenizer = ByteLevelBPETokenizer(pretokenizer_split_newlines_only=args.bpe_pretokenizer_split_newlines_only)
         tokenizer.train_from_iterator(generator, vocab_size=vocab_size+257, special_tokens=user_defined_symbols)
-        model_dir = model_prefix+f"_bpe_rn-{replace_newline}"
+        #model_dir = model_prefix+f"_bpe_rn-{replace_newline}"
+        if args.replace_newline:
+            raise NotImplementedError()
+        model_dir = model_dir+f"_psno-{pretokenizer_split_newlines_only}"
         os.makedirs(model_dir, exist_ok=True)
         tokenizer.save_model(model_dir)
     elif args.tokenizer_type == "sentencepiece":
