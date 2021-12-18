@@ -42,7 +42,8 @@ STAR_THRESHOLDS = {
 
 def main():
     """
-    Helper script to encode raw text with the GPT-2 BPE using multiple processes.
+    Helper script to encode raw text with the BPE and write in a format that can be read by fairseq-preprocess, using multiple processes.
+    Based on code from fairseq
 
     The encoder.json and vocab.bpe files can be obtained here:
     - https://dl.fbaipublicfiles.com/fairseq/gpt2_bpe/encoder.json
@@ -65,7 +66,7 @@ def main():
     parser.add_argument(
         "--use-hf-tokenizer",
         action='store_true',
-        help='use huggingface tokenizer. slower (because of multiprocessing constraints?) but to check correctness'
+        help='use huggingface tokenizer. faster than python implementation'
     )
     parser.add_argument(
         "--input-dirs",
@@ -81,17 +82,13 @@ def main():
     parser.add_argument(
         '--splits-dir',
          required=True,
+        help="path to directory containing 'train' and 'val' files with list of project names (lowercased repo names with username removed) to use in each split"
     )
 
     parser.add_argument(
         '--instances-per-shard',
         type=int,
         default=500_000,
-    )
-
-    parser.add_argument(
-        '--max-instances',
-        type=int, 
     )
 
     parser.add_argument("--workers", type=int, default=20)
@@ -117,6 +114,7 @@ def main():
                     f.write(instance)
                     # document separator
                     f.write('\n\n')
+        return shard_num + 1
 
     for input_dir in args.input_dirs:
         data = datasets.load_from_disk(input_dir)
@@ -135,16 +133,21 @@ def main():
         train_data = data_augmented.filter(lambda record: record['split'] == 'train', num_proc=args.workers)
         val_data = data_augmented.filter(lambda record: record['split'] == 'val', num_proc=args.workers)
 
-        save_to_shards(train_data['augmented_text'], dataset_name, 'train', 'raw')
-        save_to_shards(val_data['augmented_text'], dataset_name, 'val', 'raw')
+        print(f"{dataset_name}: filtered")
+        train_raw_shards = save_to_shards(train_data['augmented_text'], dataset_name, 'train', 'raw')
+        print(f"{dataset_name}: saved train-raw in {train_raw_shards} shards")
+        val_raw_shards = save_to_shards(val_data['augmented_text'], dataset_name, 'val', 'raw')
+        print(f"{dataset_name}: saved val-raw in {val_raw_shards} shards")
 
         pool = Pool(args.workers, initializer=encoder.initializer)
 
         train_tokenized = tqdm.tqdm(pool.imap(encoder.tokenize, train_data['augmented_text'], 100), total=len(train_data))
-        save_to_shards(train_tokenized, dataset_name, 'train', 'bpe')
+        train_bpe_shards = save_to_shards(train_tokenized, dataset_name, 'train', 'bpe')
+        print(f"{dataset_name}: saved train-bpe in {train_bpe_shards} shards")
 
         val_tokenized = tqdm.tqdm(pool.imap(encoder.tokenize, val_data['augmented_text'], 100), total=len(val_data))
-        save_to_shards(val_tokenized, dataset_name, 'val', 'bpe')
+        val_bpe_shards = save_to_shards(val_tokenized, dataset_name, 'val', 'bpe')
+        print(f"{dataset_name}: saved val-bpe in {val_bpe_shards} shards")
 
 
 def make_tagged(tag, inner, attributes={}, insert_newlines=True, attribute_move_probability=None):
