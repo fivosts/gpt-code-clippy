@@ -3,6 +3,7 @@ import numpy as np
 import random
 import datasets
 import os
+import itertools
 from datasets import load_from_disk, load_dataset
 
 BASE_FEATURES = {
@@ -57,8 +58,15 @@ EXTRA_FEATURES = {
     ]
 }
 
-
 TOKEN_RE = re.compile(r"\W+")
+
+IPYNB_LANG_RE = re.compile(r"<code language=([\.\w:]+)>")
+
+IPYNB_POSTPROCESS_REPLACEMENTS = [
+    (IPYNB_LANG_RE, "<cell>"),
+    (re.compile(r"<code>"), "<cell>"),
+    (re.compile(r"</code>"), "</cell>"),
+]
 
 def strip_trailing_slash(path):
     while path[-1] == '/':
@@ -80,6 +88,18 @@ def infer_source_from_data_dir(data_dir):
     if len(sources) != 1:
         raise ValueError(f"could not infer source from path {data_dir}")
     return sources[0]
+
+def infer_setlanguage_from_data_dir(data_dir):
+    languages = []
+    if 'python' in data_dir:
+        languages.append('python')
+    if 'javascript' in data_dir:
+        languages.append('javascript')
+    if 'jupyter' in data_dir:
+        languages.append("jupyter")
+    if len(languages) != 1:
+        raise ValueError(f"could not infer predominant dataset language from path {data_dir}")
+    return languages[0]
 
 def load_dataset_infer(data_dir):
     if os.path.exists(os.path.join(data_dir, "dataset.arrow")):
@@ -147,3 +167,40 @@ def make_tagged(tag, inner, attributes={}, insert_newlines=True, attribute_drop_
         return f'<{tag}{attr_string}>\n{inner}\n</{tag}>'
     else:
         return f'<{tag}{attr_string}>{inner}</{tag}>'
+
+def postprocess_ipynb(text):
+#     re.compile(r"<code language=(.*)>"),
+#     re.compile(r"<code ext=.ipynb:\1>"),
+
+    # extract .ipynb:kernel
+    match = IPYNB_LANG_RE.search(text)
+    if match is not None:
+        # 
+        ext = f'.ipynb:{match.groups(1)[0]}'
+    else:
+        ext = '.ipynb'
+    for regex, rep in IPYNB_POSTPROCESS_REPLACEMENTS:
+        text = regex.sub(rep, text)
+    return text, ext
+
+def add_metadata(record, attribute_drop_probability, stars_bins=None):
+    file_name = record['file_name']
+    _, extension = os.path.splitext(file_name)
+    attributes = {}
+    if extension:
+        attributes['ext'] = extension
+        if extension == '.ipynb':
+            text = postprocess_ipynb(record['text'])
+        else:
+            text = record['text']
+    
+    raise NotImplementedError("stars_bins")
+
+def grouper(n, iterable):
+    # https://stackoverflow.com/a/8991553/1319683
+    it = iter(iterable)
+    while True:
+        chunk = list(itertools.islice(it, n))
+        if not chunk:
+            return
+        yield chunk

@@ -95,7 +95,8 @@ if __name__ == "__main__":
 
     # file and yield (subsampling) rate
     stack_exchange = [
-        ("/private/home/dpf/projects/stackexchange_dataset/dumps/stackoverflow/Posts.xml", args.stackoverflow_subsample_rate),
+        #("/private/home/dpf/projects/stackexchange_dataset/dumps/stackoverflow/Posts.xml", args.stackoverflow_subsample_rate),
+        ("/scratch/dpf/data/stackexchange_dataset/dumps/stackoverflow/Posts.xml", args.stackoverflow_subsample_rate),
         #("/private/home/dpf/projects/stackexchange_dataset/dumps/stackoverflow/Comments.xml", args.stackoverflow_subsample_rate),
     ]
     
@@ -129,15 +130,15 @@ if __name__ == "__main__":
     else:
         user_defined_symbols = []
 
-    user_defined_symbols += ['<|endoftext|>', '<|pad|>', '<|mask|>']
+    #user_defined_symbols += ['<|endoftext|>', '<|pad|>', '<|mask|>']
 
     if args.tokenizer_type == "byte_level_bpe":
         tokenizer = ByteLevelBPETokenizer(pretokenizer_split_newlines_only=args.bpe_pretokenizer_split_newlines_only)
-        tokenizer.train_from_iterator(generator, vocab_size=vocab_size+257, special_tokens=user_defined_symbols)
+        tokenizer.train_from_iterator(generator, vocab_size=vocab_size+257, special_tokens=None)
         #model_dir = model_prefix+f"_bpe_rn-{replace_newline}"
         if args.replace_newline:
             raise NotImplementedError()
-        model_dir = model_dir+f"_psno-{pretokenizer_split_newlines_only}"
+        model_dir = model_prefix+f"_psno-{args.bpe_pretokenizer_split_newlines_only}"
         os.makedirs(model_dir, exist_ok=True)
         tokenizer.save_model(model_dir)
     elif args.tokenizer_type == "sentencepiece":

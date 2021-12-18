@@ -30,7 +30,7 @@ ADD_PREFIX_SPACE = False
 #LANGUAGE_SOURCES = ['repo_language', 'filename_extension', 'linguist']
 LANGUAGE_SOURCES = ['linguist']
 
-POSSIBLE_TOKENIZERS = ["gpt2", "codet5", "bpe", "bpe_rn", "sentencepiece", "sentencepiece_rn"]
+POSSIBLE_TOKENIZERS = ["gpt2", "codet5", "bpe", "bpe_psno-False", "bpe_psno-True", "bpe_rn", "sentencepiece", "sentencepiece_rn"]
 
 from train_multicorp_tokenizer import NEWLINE_REP
 
@@ -73,8 +73,23 @@ class Worker(Process):
             our_tokenizer_model = ByteLevelBPETokenizer.from_file(
                 "tokenizers/github-py+so_bpe_rn-False/vocab.json",
                 "tokenizers/github-py+so_bpe_rn-False/merges.txt",
+                pretokenizer_split_newlines_only=True,
             )
             tokenizers["bpe"] = PreTrainedTokenizerFast(tokenizer_object=our_tokenizer_model)
+        if "bpe_psno-False" in self.tokenizer_names:
+            our_tokenizer_model = ByteLevelBPETokenizer.from_file(
+                "tokenizers/github-py+so_psno-False/vocab.json",
+                "tokenizers/github-py+so_psno-False/merges.txt",
+                pretokenizer_split_newlines_only=False,
+            )
+            tokenizers["bpe_psno-False"] = PreTrainedTokenizerFast(tokenizer_object=our_tokenizer_model)
+        if "bpe_psno-True" in self.tokenizer_names:
+            our_tokenizer_model = ByteLevelBPETokenizer.from_file(
+                "tokenizers/github-py+so_psno-True/vocab.json",
+                "tokenizers/github-py+so_psno-True/merges.txt",
+                pretokenizer_split_newlines_only=True,
+            )
+            tokenizers["bpe_psno-True"] = PreTrainedTokenizerFast(tokenizer_object=our_tokenizer_model)
         if "bpe_rn" in self.tokenizer_names:
             our_tokenizer_model_rn = ByteLevelBPETokenizer.from_file(
                 "tokenizers/github-py+so_bpe_rn-True/vocab.json",
