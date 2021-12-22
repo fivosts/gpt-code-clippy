@@ -30,15 +30,19 @@ from code_clippy_dataset.utils import infer_setlanguage_from_data_dir, infer_sou
 from gpt2_bpe_utils import get_encoder
 
 STAR_THRESHOLDS = {
-    # 0 <= x < 2; 2 <= x < 4; 4 <= x < 9; 9 <= x < 30
-    ('github', 'javascript'): [0, 2, 4, 9, 30],
-    ('github', 'jupyter'):    [0, 1, 2, 5, 19],
-    ('github', 'python'):     [0, 1, 3, 8, 36],
-    ('gitlab', 'javascript'): [0, 1, 3, float('inf'), float('inf')],
-    ('gitlab', 'python'):     [0, 1, 2, float('inf'), float('inf')],
-    ('google-code', 'javascript'): [0, 1, 2, float('inf'), float('inf')],
-    ('google-code', 'python'): [0, 1, 2, 5, float('inf')],
+    ('github', 'javascript'): [2, 5, 15, 41, 102, 239],
+    ('github', 'python'):     [0, 2, 8, 24, 66, 161],
+    ('github', 'jupyter'):    [0, 1, 4, 12, 32, 84],
+    # ('gitlab', 'javascript'): [0, 0, 0, 0, 0, 1], # too few repos have stars for this to be informative
+    # ('gitlab', 'python'):     [0, 0, 0, 0, 1, 1], # too few repos have stars for this to be informative
+    # ('google-code', 'javascript'): [0, 0, 0, 0, 1, 1], # too few repos have stars for this to be informative
+    # ('google-code', 'python'): [0, 0, 0, 1, 2, 4], # too few repos have stars for this to be informative
 }
+
+# from https://github.com/madisonmay/CommonRegex/blob/2425abdb79c8992b8b655c27e1fb195cc54457ab/commonregex.py#L10, modified to take out some common delimiters to avoid replacing e.g. author='x@y.com'
+EMAIL_RE = re.compile("([a-z0-9!#$%&*+?^_|.~-]+@(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)", re.IGNORECASE)
+# more permissive separators but needs to match more exact domain
+EMAIL_RE_2 = re.compile("([a-z0-9!#$%&*+?^_|.~-]+((\s*@\s*|\s+at\s+|\s+a\s+|\s*\(at\)\s*|\s*\[at\]\s*|\s*\(a\)\s*))[a-z0-9.]+\.(com|co\.[a-z][a-z]|ac\.[a-z][a-z]|edu|org|gov|net))", re.IGNORECASE)
 
 def main():
     """
@@ -91,6 +95,24 @@ def main():
         default=500_000,
     )
 
+    parser.add_argument(
+        '--attribute-move-probability',
+        type=float,
+        default=0.5,
+    )
+
+    parser.add_argument(
+        '--metadata',
+        nargs='*',
+        choices=['dstars', 'source', 'extension', 'filename'],
+        default=['dstars', 'source', 'extension'],
+    )
+
+    parser.add_argument(
+        '--no-redact-pii',
+        action='store_true',
+    )
+
     parser.add_argument("--workers", type=int, default=20)
     args = parser.parse_args()
 
@@ -119,9 +141,6 @@ def main():
     for input_dir in args.input_dirs:
         data = datasets.load_from_disk(input_dir)
 
-        if args.max_instances:
-            data = data[:args.max_instances]
-
         encoder.dataset_dir = input_dir
 
         dataset_name = '_'.join(input_dir.split('/')[-3:-1])
@@ -149,6 +168,10 @@ def main():
         val_bpe_shards = save_to_shards(val_tokenized, dataset_name, 'val', 'bpe')
         print(f"{dataset_name}: saved val-bpe in {val_bpe_shards} shards")
 
+def redact_pii(text):
+    #text = EMAIL_RE.sub("removed@example.com", text)
+    text = EMAIL_RE_2.sub("removed@example.com", text)
+    return text
 
 def make_tagged(tag, inner, attributes={}, insert_newlines=True, attribute_move_probability=None):
     if attributes:
@@ -205,10 +228,13 @@ class MultiprocessingEncoder(object):
         return bpe
 
     def process(self, example):
+        args = self.args
         dataset_dir = example['dataset_dir']
         source = infer_source_from_data_dir(dataset_dir)
         if source == 'bigquery':
-            source = 'github'
+            standardized_source = 'github'
+        else:
+            standardized_source = source
         setlanguage = infer_setlanguage_from_data_dir(dataset_dir)
 
         ts = example['repo_name'].lower().split('/')
@@ -224,29 +250,42 @@ class MultiprocessingEncoder(object):
         else:
             raise ValueError(f"project_name {project_name} not found in train or val list!")
 
-        attributes = {'source': source}
+        attributes = {}
+        if 'source' in args.metadata:
+            attributes['source'] =  standardized_source
 
-        stars = int(example.get('stars', '-1'))
+        if 'extension' in args.metadata:
+            _, extension = os.path.splitext(example['file_name'])
+            if extension is not None and extension.strip():
+                if extension == '.ipynb':
+                    text, extension = postprocess_ipynb(example['text'])
+                else:
+                    text = example['text']
+                attributes['ext'] = extension
 
-        _, extension = os.path.splitext(example['file_name'])
-        if extension is not None and extension.strip():
-            if extension == '.ipynb':
-                text, extension = postprocess_ipynb(example['text'])
-            else:
-                text = example['text']
-            attributes['ext'] = extension
+        if 'filename' in args.metadata:
+            filename = os.path.basename(example['file_name'])
+            if " " in filename:
+                filename = f'"{filename}"'
+            attributes['filename'] = filename
 
-        if stars >= 0 and (source, setlanguage) in STAR_THRESHOLDS:
-            thresholds = STAR_THRESHOLDS[(source, setlanguage)]
-            disc_threshold = 0
-            while disc_threshold < len(thresholds) and thresholds[disc_threshold] <= stars:
-                disc_threshold += 1
-            disc_threshold -=1
-            assert 0 <= disc_threshold < len(thresholds)
+        if 'dstars' in args.metadata:
+            stars = int(example.get('stars', '-1'))
+            if (source, setlanguage) in STAR_THRESHOLDS:
+                thresholds = STAR_THRESHOLDS[(source, setlanguage)]
+                if stars >= thresholds[0]:
+                    disc_threshold = 0
+                    while disc_threshold < len(thresholds) and thresholds[disc_threshold] <= stars:
+                        disc_threshold += 1
+                    disc_threshold -= 1
+                    assert 0 <= disc_threshold < len(thresholds)
 
-            attributes['dstars'] = disc_threshold
+                    attributes['dstars'] = disc_threshold
 
-        augmented_file = make_tagged('file', text, attributes=attributes, insert_newlines=True, attribute_move_probability=0.5)
+        if not args.no_redact_pii:
+            text = redact_pii(text)
+
+        augmented_file = make_tagged('file', text, attributes=attributes, insert_newlines=True, attribute_move_probability=self.args.attribute_move_probability)
         # encoded = self.encode_text(rank, augmented_file)
 
         return {

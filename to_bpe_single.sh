@@ -14,8 +14,8 @@ python code_bpe_encoder.py \
     --vocab-file /checkpoint/dpf/data/tokenizers/github-py+so_psno-True/vocab.json \
     --pretokenizer-split-newlines-only \
     --input-dirs ${input_dir} \
-    --output-dir /checkpoint/dpf/data/processed \
+    --output-dir /checkpoint/dpf/data/processed_filenames_redact \
     --use-hf-tokenizer \
     --splits-dir /checkpoint/dpf/data/splits/ \
+    --metadata dstars source extension filename \
     --workers 40
-

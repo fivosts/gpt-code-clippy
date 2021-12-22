@@ -76,6 +76,12 @@ def keep_record(record,
 
     repo_name = record["repo_name"].lower()
 
+    toks = repo_name.split('/')
+    if len(toks) == 2:
+        project_name = toks[1]
+    else:
+        project_name = repo_name
+
     if len(text) == 0:
         print(f'empty record {record["repo_name"]}: {record["file_name"]}')
         return False
@@ -86,7 +92,7 @@ def keep_record(record,
     if repos_and_basenames_to_exclude is not None and (repo_name, basename) in repos_and_basenames_to_exclude:
         # tqdm.tqdm.write(f"excluding {(record['repo_name'], basename)}")
         return False
-    if repos_to_exclude is not None and repo_name in repos_to_exclude:
+    if repos_to_exclude is not None and repo_name in repos_to_exclude or project_name in repos_to_exclude:
         return False
     if (maximum_line_length is not None or maximum_average_line_length is not None) and extension not in UNLIMITED_LINE_LENGTH_EXTENSIONS:
         line_lengths = np.array([len(l) for l in NEWLINE_RE.split(text)])
@@ -184,8 +190,11 @@ if __name__ == "__main__":
                 with open(fname) as f:
                     this_repos_to_exclude = set()
                     for repo_name, in csv.reader(f):
+                        repo_name = repo_name.lower()
                         assert len(repo_name.split('/')) == 2, repo_name
-                        this_repos_to_exclude.add(repo_name.lower())
+                        project_name = repo_name.split('/')[1]
+                        this_repos_to_exclude.add(repo_name)
+                        this_repos_to_exclude.add(project_name)
                     repos_to_exclude.update(this_repos_to_exclude)
         else:
             repos_to_exclude = None
@@ -209,6 +218,6 @@ if __name__ == "__main__":
         dataset_filtered = dataset.filter(predicate, num_proc=args.num_proc)
 
         print(f"retained {len(dataset_filtered)} / {len(dataset)} records ({len(dataset_filtered)/len(dataset)*100:.2f}%)")
-        output_dir = data_dir + "_filtered_mwcf-0.4_mll-3000_pandoc_csn"
+        output_dir = data_dir + "_filtered_mwcf-0.4_mll-3000_pandoc_csn-conservative"
         print(f"deduplicating to directory {output_dir}")
         dataset_filtered.save_to_disk(output_dir)

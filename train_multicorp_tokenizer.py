@@ -1,10 +1,13 @@
 import re
+import csv
 import random
 import itertools
 import lxml.etree
 import tqdm
 from datasets import load_dataset
 from code_clippy_dataset.utils import load_dataset_infer
+
+from collections import defaultdict
 
 import sentencepiece as spm
 from tokenizers import ByteLevelBPETokenizer
@@ -15,44 +18,58 @@ NEWLINE_REP = "<|n|>"
 
 SPLIT_LINES = re.compile(f'.*[\r\n]+')
 
+from code_bpe_encoder import redact_pii
+
+def make_iter(filename):
+    if filename.endswith('csv'):
+        with open(filename, 'r') as f:
+            f = (line.replace('\0', '') for line in f)
+            reader = csv.DictReader(f)
+            for row in reader:
+                record = defaultdict(lambda: None, {k: None if v == '' else v for k, v in row.items()})
+                yield record
+    else:
+        for event, elem in etree.iterparse(file, events=('end',)):
+            if elem.tag == 'row':
+                record = defaultdict(lambda: None, elem.attrib)
+                yield record.attrib
+                elem.clear()
+
 def stackexchange_reader(filename, rng, yield_rate=None, parse_html=True):
 
     basename = filename.split('/')[-1]
-    if basename == 'Comments.xml':
+    if basename.startswith('Comments'):
         text_field = 'Text'
         num_rows = 82_037_744 - 3
-    elif basename == 'Posts.xml':
+    elif basename.startswith('Posts'):
         text_field = 'Body'
         num_rows = 53_949_888 - 3
     else:
         raise ValueError(f"unrecognized basename {basename}")
 
-    with open(filename, 'rb') as f:
-        for event, element in tqdm.tqdm(
-            lxml.etree.iterparse(f), ncols=80, total=num_rows, desc=basename
-        ):
-            if event == 'end' and element.tag == 'row':
-                if yield_rate is not None and rng.random() > yield_rate:
-                    continue
-                if text_field not in element.attrib:
-                    continue
-                text = element.attrib[text_field]
-                if parse_html:
-                    from bs4 import BeautifulSoup
-                    parsed = BeautifulSoup(text, "html.parser")
-                    yield parsed.get_text()
-                else:
-                    yield text
+    for record in tqdm.tqdm(make_iter(filename), ncols=120, total=num_rows, desc=basename):
+        if yield_rate is not None and rng.random() > yield_rate:
+            continue
+        if text_field not in record:
+            continue
+        text = record[text_field]
+        if parse_html:
+            from bs4 import BeautifulSoup
+            parsed = BeautifulSoup(text, "html.parser")
+            yield parsed.get_text()
+        else:
+            yield text
 
 def dataset_reader(data_dir, rng, source="github", yield_rate=None):
     # datasets are hashed based on arguments, which are sensitive to trailing dashes (even though loading is not)
     data_dir = data_dir.rstrip("/")
     data = load_dataset_infer(data_dir)
-    for x in tqdm.tqdm(data, ncols=80, desc=data_dir):
+    for x in tqdm.tqdm(data, ncols=120, desc=data_dir.rstrip('/').split('/')[-2]):
         if yield_rate is None or rng.random() <= yield_rate:
             yield x['text']
 
 def preprocess_text(text, max_len=MAX_DOC_LENGTH, replace_newline=True):
+    text = redact_pii(text)
     if replace_newline:
         i = 0
         while i < len(text):
@@ -88,15 +105,16 @@ if __name__ == "__main__":
 
     # directory and number of files to take
     data_dirs = [
-        ("/private/home/dpf/data/github/python_forkless_open-source_2star+/data_dedup_filtered_mwcf-0.4_mll-3000_pandoc_csn/", args.per_dir_file_limit),
-        ("/private/home/dpf/data/github/python_forkless_open-source_1star/data_dedup_filtered_mwcf-0.4_mll-3000_pandoc_csn/", args.per_dir_file_limit),
+        ("/checkpoint/dpf/data/github/python_forkless_open-source_2star+/data_dedup_filtered_mwcf-0.4_mll-3000_pandoc_csn-conservative/", args.per_dir_file_limit),
+        ("/checkpoint/dpf/data/github/python_forkless_open-source_1star/data_dedup_filtered_mwcf-0.4_mll-3000_pandoc_csn-conservative/", args.per_dir_file_limit),
         #("/private/home/dpf/data/github/javascript_forkless_open-source/data_dedup_filtered/", args.per_dir_file_limit),
     ]
 
     # file and yield (subsampling) rate
     stack_exchange = [
         #("/private/home/dpf/projects/stackexchange_dataset/dumps/stackoverflow/Posts.xml", args.stackoverflow_subsample_rate),
-        ("/scratch/dpf/data/stackexchange_dataset/dumps/stackoverflow/Posts.xml", args.stackoverflow_subsample_rate),
+        #("/checkpoint/dpf/data/stackexchange_dataset/dumps/stackoverflow/Posts.xml", args.stackoverflow_subsample_rate),
+        ("/checkpoint/dpf/data/stackexchange_dataset/dumps/stackoverflow/Posts.csv", args.stackoverflow_subsample_rate),
         #("/private/home/dpf/projects/stackexchange_dataset/dumps/stackoverflow/Comments.xml", args.stackoverflow_subsample_rate),
     ]
     
@@ -130,20 +148,20 @@ if __name__ == "__main__":
     else:
         user_defined_symbols = []
 
-    #user_defined_symbols += ['<|endoftext|>', '<|pad|>', '<|mask|>']
+    user_defined_symbols += ['<|endoftext|>', '<|pad|>', '<|mask|>']
 
     if args.tokenizer_type == "byte_level_bpe":
         tokenizer = ByteLevelBPETokenizer(pretokenizer_split_newlines_only=args.bpe_pretokenizer_split_newlines_only)
-        tokenizer.train_from_iterator(generator, vocab_size=vocab_size+257, special_tokens=None)
+        tokenizer.train_from_iterator(generator, vocab_size=vocab_size+257, special_tokens=user_defined_symbols)
         #model_dir = model_prefix+f"_bpe_rn-{replace_newline}"
         if args.replace_newline:
             raise NotImplementedError()
-        model_dir = model_prefix+f"_psno-{args.bpe_pretokenizer_split_newlines_only}"
+        model_dir = model_prefix+f"_redacted_psno-{args.bpe_pretokenizer_split_newlines_only}"
         os.makedirs(model_dir, exist_ok=True)
         tokenizer.save_model(model_dir)
     elif args.tokenizer_type == "sentencepiece":
         spm.SentencePieceTrainer.train(
-            sentence_iterator=generator, model_prefix=model_prefix+f"_spm-rn-{replace_newline}", vocab_size=vocab_size,
+            sentence_iterator=generator, model_prefix=model_prefix+f"_redacted_spm-rn-{replace_newline}", vocab_size=vocab_size,
             user_defined_symbols=user_defined_symbols,
             model_type='unigram',
             max_sentence_length=MAX_DOC_LENGTH,
