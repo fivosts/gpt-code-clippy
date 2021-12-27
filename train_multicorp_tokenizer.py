@@ -6,6 +6,7 @@ import lxml.etree
 import tqdm
 from datasets import load_dataset
 from code_clippy_dataset.utils import load_dataset_infer
+from bs4 import BeautifulSoup
 
 from collections import defaultdict
 
@@ -54,9 +55,11 @@ def stackexchange_reader(filename, rng, yield_rate=None, parse_html=True):
             continue
         text = record[text_field]
         if parse_html:
-            from bs4 import BeautifulSoup
-            parsed = BeautifulSoup(text, "html.parser")
-            yield parsed.get_text()
+            try:
+                parsed = BeautifulSoup(text, "html.parser")
+                yield parsed.get_text()
+            except Exception as e:
+                print(e)
         else:
             yield text
 
@@ -124,10 +127,10 @@ if __name__ == "__main__":
     rng = random.Random(1)
 
     generators = []
-    for data_dir, limit in data_dirs:
-        generators.append(itertools.islice(dataset_reader(data_dir, rng), limit))
     for path, yield_rate in stack_exchange:
         generators.append(stackexchange_reader(path, rng, yield_rate=yield_rate, parse_html=True))
+    for data_dir, limit in data_dirs:
+        generators.append(itertools.islice(dataset_reader(data_dir, rng), limit))
 
     # limit = 2000
     # if limit is not None:

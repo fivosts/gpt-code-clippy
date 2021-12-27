@@ -42,7 +42,7 @@ STAR_THRESHOLDS = {
 # from https://github.com/madisonmay/CommonRegex/blob/2425abdb79c8992b8b655c27e1fb195cc54457ab/commonregex.py#L10, modified to take out some common delimiters to avoid replacing e.g. author='x@y.com'
 EMAIL_RE = re.compile("([a-z0-9!#$%&*+?^_|.~-]+@(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)", re.IGNORECASE)
 # more permissive separators but needs to match more exact domain
-EMAIL_RE_2 = re.compile("([a-z0-9!#$%&*+?^_|.~-]+((\s*@\s*|\s+at\s+|\s+a\s+|\s*\(at\)\s*|\s*\[at\]\s*|\s*\(a\)\s*))[a-z0-9.]+\.(com|co\.[a-z][a-z]|ac\.[a-z][a-z]|edu|org|gov|net))", re.IGNORECASE)
+EMAIL_RE_2 = re.compile("([a-z0-9!#$%&*+?^_|.~-]+((\s*@\s*|\s+at\s+|\s+a\s+|\s*\(at\)\s*|\s*\[at\]\s*|\s*\(a\)\s*))[a-z0-9.]+(\.|\s+dot\s+|\s*\(dot\)\s*|\s*\[dot\]\s*)(com|co\.[a-z][a-z]|ac\.[a-z][a-z]|edu|org|gov|net))", re.IGNORECASE)
 
 def main():
     """
@@ -143,7 +143,7 @@ def main():
 
         encoder.dataset_dir = input_dir
 
-        dataset_name = '_'.join(input_dir.split('/')[-3:-1])
+        dataset_name = '_'.join(input_dir.rstrip('/').split('/')[-3:-1])
         print(f'{dataset_name}\t({len(data):_}): \t {input_dir}')
 
         data = data.add_column('dataset_dir', np.full(len(data), input_dir))

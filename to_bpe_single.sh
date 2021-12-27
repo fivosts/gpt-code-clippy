@@ -10,8 +10,8 @@
 input_dir=$1
 
 python code_bpe_encoder.py \
-    --merge-file /checkpoint/dpf/data/tokenizers/github-py+so_psno-True/merges.txt \
-    --vocab-file /checkpoint/dpf/data/tokenizers/github-py+so_psno-True/vocab.json \
+    --merge-file /checkpoint/dpf/data/tokenizers/github-py-redacted+so_psno-True/merges.txt \
+    --vocab-file /checkpoint/dpf/data/tokenizers/github-py-redacted+so_psno-True/vocab.json \
     --pretokenizer-split-newlines-only \
     --input-dirs ${input_dir} \
     --output-dir /checkpoint/dpf/data/processed_filenames_redact \
