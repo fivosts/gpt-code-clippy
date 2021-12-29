@@ -27,7 +27,7 @@ import datasets
 
 from code_clippy_dataset.utils import infer_setlanguage_from_data_dir, infer_source_from_data_dir, postprocess_ipynb, grouper
 
-from gpt2_bpe_utils import get_encoder
+from to_fairseq.gpt2_bpe_utils import get_encoder
 
 STAR_THRESHOLDS = {
     ('github', 'javascript'): [2, 5, 15, 41, 102, 239],

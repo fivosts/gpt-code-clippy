@@ -4,6 +4,9 @@ human-eval
 hf_cache
 data
 .vscode
+logs/
+slurm-logs/
+tokenizers/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
