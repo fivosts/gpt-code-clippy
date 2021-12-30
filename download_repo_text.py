@@ -228,7 +228,15 @@ def _process_repo(repo_data, repodir, license_filter, repo_type, extra_tags=None
         print(e)
     return out, meta
 
-def process_repo_list(repo_data, clone_timeout, processing_timeout, source='github', license_filter=None, historic_checkout=False):
+def process_repo_list(args, repo_data, clone_timeout, processing_timeout, source='github', license_filter=None, historic_checkout=False, abort_on_errors=False, scratch_dir=None):
+    # TODO: get rid of redundant arguments that are also in args
+
+    assert scratch_dir is not None
+
+    # make output dirs
+    tmp_dir = os.path.join(scratch_dir, '.tmp')
+    os.makedirs(tmp_dir, exist_ok=True)
+
     out = None
     meta = repo_data
     repodir = None
@@ -249,7 +257,7 @@ def process_repo_list(repo_data, clone_timeout, processing_timeout, source='gith
         if is_git:
             # gitlab allows this to have more than 2
             username, projectname = name.split("/")[-2:]
-            rootfolder = os.path.join(".tmp", username)
+            rootfolder = os.path.join(tmp_dir, username)
             repodir = os.path.join(rootfolder, projectname)
 
             if historic_checkout:
@@ -261,7 +269,8 @@ def process_repo_list(repo_data, clone_timeout, processing_timeout, source='gith
             repo_type = 'git'
         else:
             assert not historic_checkout
-            rootfolder = os.path.join(".tmp", name)
+            assert not args.pr_comments
+            rootfolder = os.path.join(tmp_dir, name)
             repodir = os.path.join(rootfolder, name)
 
             command = f'wget {base_url}; unzip source-archive.zip'
@@ -271,7 +280,7 @@ def process_repo_list(repo_data, clone_timeout, processing_timeout, source='gith
         p = subprocess.Popen(
             command,
             shell=True,
-            cwd=os.path.join(os.getcwd(), rootfolder),
+            cwd=rootfolder,
             stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT,
         )
         try:
@@ -308,7 +317,10 @@ def process_repo_list(repo_data, clone_timeout, processing_timeout, source='gith
                     'commit_date': get_git_date(repodir, middle_commit),
                     'commits_in_past': commits_in_past,
                 }
-                proc = subprocess.run(f'git checkout {middle_commit}', shell=True, cwd=os.path.join(os.getcwd(), repodir), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                proc = subprocess.run(
+                    f'git checkout {middle_commit}', shell=True, 
+                    cwd=repodir, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+                )
                 if proc.returncode == 0:
                     new_out, new_meta = timeout(_process_repo, args=(repo_data, repodir, license_filter, repo_type, middle_extra_tags), timeout_duration=processing_timeout)
                     if new_out is not None:
@@ -321,8 +333,11 @@ def process_repo_list(repo_data, clone_timeout, processing_timeout, source='gith
                 out = None
 
     except Exception as e:
-        print(e)
-        print(f"error dir: {repodir}")
+        if ignore_errors:
+            print(e)
+            print(f"error dir: {repodir}")
+        else:
+            raise e
         # if verbose:
         #     print(e)
     if repodir is not None:
@@ -337,6 +352,7 @@ def process_args():
     parser = argparse.ArgumentParser(
         description='CLI for git SCM downloader - A tool for scraping repos as text from github/gitlab/bitbucket')
     parser.add_argument('output_dir')
+    parser.add_argument('--scratch_dir', default="/scratch/dpf/code-crawl-scratch")
     parser.add_argument('--input_csvs', nargs="+", required=True)
     parser.add_argument('--n_threads', help='number of threads for parallel processing, -1 for cpu_count * 3',
                         default=10,
@@ -362,6 +378,8 @@ def process_args():
     parser.add_argument('-v', '--verbose', help='if flag is present, print errors', action='store_true')
     parser.add_argument('--open_source_only', action='store_true')
     parser.add_argument('--historic_checkout', action='store_true')
+    parser.add_argument('--pr_comments', action='store_true')
+    parser.add_argument('--abort_on_errors', action='store_true')
     return parser.parse_args()
 
 
@@ -369,6 +387,8 @@ if __name__ == '__main__':
 
     args = process_args()  # parse args
     verbose = args.verbose
+
+    scratch_dir = args.scratch_dir if args.scratch_dir is not None else args.output_dir
 
     if not os.path.isdir(args.output_dir):
         raise Exception("output directory {args.output_dir} does not exist; exiting")
@@ -443,13 +463,9 @@ if __name__ == '__main__':
     already_scraped_output_file = open(already_processed_file, 'a', buffering=1)
 
     print(args.output_dir)
-    os.chdir(args.output_dir)
 
-    # make output dirs
-    if '.tmp' not in os.listdir():
-        os.makedirs('.tmp')
-    if 'data' not in os.listdir():
-        os.makedirs('data')
+    data_dir = os.path.join(output_dir, 'data')
+    os.makedirs(data_dir, exist_ok=True)
 
     # filter by number of stars
     if args.n_stars != -1:
@@ -466,8 +482,7 @@ if __name__ == '__main__':
 
     # do work
     repo_chunks = split_into_chunks(repo_data, chunk_size)
-    archive_name = 'data'
-    ar = lmd.Archive(archive_name)
+    ar = lmd.Archive(data_dir)
     processed_names = []
 
     pool = Pool(n_threads)
@@ -476,10 +491,13 @@ if __name__ == '__main__':
 
     license_counter = Counter()
 
+    os.chdir(scratch_dir)
+
     # TODO: also include language filter
     processing_function = functools.partial(
         process_repo_list, clone_timeout=args.clone_timeout, processing_timeout=args.processing_timeout,
         source=args.source, license_filter=license_filter, historic_checkout=args.historic_checkout,
+        abort_on_errors=args.abort_on_errors, scratch_dir=scratch_dir, args=args,
     )
 
     for count, chunk in enumerate(pbar):

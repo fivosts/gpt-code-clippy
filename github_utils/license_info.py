@@ -1,12 +1,10 @@
 import re
-from ghapi.all import GhApi
 import os
 import csv
 import pickle
 import tqdm
-import time
 
-from fastcore.net import HTTP403ForbiddenError
+from .api import try_request
 
 DIGIT_RE = re.compile(r'[0-9]+')
 
@@ -40,42 +38,13 @@ LICENSES = {
 
 PERMISSIVE_LICENSES = {'mit', 'apache-2.0', 'bsd-2-clause', 'bsd-3-clause'}
 
-API_KEY = os.environ.get("GH_API_KEY")
-print(f"API_KEY: {API_KEY}")
-
-api = GhApi(token=API_KEY)
-
-API_REQUESTS = 0
-
-def get_license_using_api(repo_name):
-    MAX_REQUESTS = 5000 if API_KEY is not None else 1000
-    sleep_time_seconds = 60*60 # 1 hour
-    #sleep_time_seconds = 60 # 1 minute
-
-    global API_REQUESTS
+def get_license_using_api(repo_name, **kwargs):
 
     owner, repo = repo_name.split('/')
 
-    successful = False
-    while not successful:
+    response = try_request(lambda api: api.repos.get(owner, repo), **kwargs)
 
-        if API_REQUESTS >= MAX_REQUESTS - 1:
-            print(f"hit max requests; sleeping for {sleep_time_seconds} seconds")
-            time.sleep(sleep_time_seconds)
-            API_REQUESTS = 0
-        try:
-            response = api.repos.get(owner, repo)
-            API_REQUESTS += 1
-            successful = True
-        except HTTP403ForbiddenError as e:
-            print(f"403 error; sleeping for {sleep_time_seconds} seconds")
-            time.sleep(sleep_time_seconds)
-            API_REQUESTS = 0
-        except Exception as e:
-            print(e)
-            return 'none'
-
-    if response.license is not None:
+    if response is not None and response.license is not None:
         return response.license.key
     else:
         return 'none'
