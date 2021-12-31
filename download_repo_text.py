@@ -18,7 +18,7 @@ import subprocess
 import functools
 
 from hacky_linguist import LANGUAGE_EXTENSIONS
-from github_utils.utils import get_git_commits, get_git_date, 
+from github_utils.utils import get_git_commits, get_git_date
 from code_clippy_dataset.utils import split_into_chunks, timeout, TimeoutError
 
 MAX_TEXT_SIZE = 10_000_000

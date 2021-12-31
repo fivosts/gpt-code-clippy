@@ -1,29 +1,16 @@
-# Copyright maintained by EleutherAI. Originally from https://github.com/EleutherAI/github-downloader
-
-import chardet
-import magic
-import lm_dataformat as lmd
 import os
 import random
-import sys
-import traceback
 import shutil
-import csv
 import json
 from collections import Counter
-from multiprocessing import cpu_count, Pool, Process, JoinableQueue
+from multiprocessing import Process, JoinableQueue
 from tqdm import tqdm
 import argparse
 import subprocess
-import functools
 import zstandard as zstd
 
-from hacky_linguist import LANGUAGE_EXTENSIONS
-
-from code_clippy_dataset.utils import split_into_chunks, timeout, TimeoutError
-from github_utils.utils import GitRepo, get_git_commits, get_git_date
+from github_utils.utils import GitRepo
 from github_utils.comments import aggregate_comments
-from download_repo_text import MIME, MAX_TEXT_SIZE, get_content
 
 class Worker(Process):
     def __init__(self, args, index, input_queue, output_queue,
@@ -39,27 +26,38 @@ class Worker(Process):
         #print(f"worker {self.index} starting")
         while True:
             input = self.input_queue.get()
-            if self.progress_bar is not None:
-                with self.progress_bar.get_lock():
-                    self.progress_bar.update(1)
             if input is None:
                 self.output_queue.put(None)
                 self.input_queue.task_done()
                 break
 
+            if self.progress_bar is not None and input is not None:
+                with self.progress_bar.get_lock():
+                    self.progress_bar.set_postfix({'name': input['name']})
+
             result = self.compute_result(input)
+
+            if self.progress_bar is not None:
+                with self.progress_bar.get_lock():
+                    self.progress_bar.update(1)
+
             self.output_queue.put(result)
             self.input_queue.task_done()
-        print(f"worker {self.index} ending")
+        # print(f"worker {self.index} ending")
     
     def compute_result(self, input):
         raise NotImplementedError()
 
 class CommentWorker(Worker):
     def compute_result(self, input):
-        owner, repo = input['repo_name'].split('/')
-        comment_data = aggregate_comments(owner, repo, approximate_max_comments=self.args.approximate_max_comments)
-        input.update(comment_data)
+        try:
+            owner, repo = input['name'].split('/')
+            comment_data = aggregate_comments(owner, repo, approximate_max_comments=self.args.approximate_max_comments)
+            input.update(comment_data)
+        except Exception as e:
+            print(e)
+            import traceback
+            traceback.print_tb(e.__traceback__, limit=3)
         return input
 
 class FileWorker(Worker):
@@ -73,14 +71,15 @@ class FileWorker(Worker):
 
         repodir = None
 
-        # Dict[pull_request_id: int, Dict[(original_commit_id: str, path: str, original_position: int), List[comment: str]]]
-        comments = repo_data['comments']
-
         # Dict[commit_id, [List[path: str]]]
-        paths_by_commit = repo_data['paths_by_commit']
+        commits_and_paths = repo_data['commits_and_paths']
 
-        # int
-        num_comments = repo_data['num_comments']
+        def remove_dir():
+            if repodir is not None:
+                try:
+                    shutil.rmtree(repodir, ignore_errors=True)
+                except Exception as e:
+                    print(e)
 
         try:
             name = repo_data['name']
@@ -107,20 +106,29 @@ class FileWorker(Worker):
 
             git_repo = GitRepo(repodir)
 
-            file_data_by_commit_and_path = {}
+            commit_info = []
 
-            commit_info = {}
+            bad_commits = set()
+            file_data = []
 
-            for commit, paths in paths_by_commit:
-                for path in paths:
-                    # dict with keys {'path', 'parent_content', 'parent_commit', 'child_content', 'child_commit'}
-                    file_datum = git_repo.get_file_before_and_after_commit(commit, path)
-                    del file_datum['path']
-                    file_data_by_commit_and_path[(commit, path)] = file_datum
-                commit_info[commit] = git_repo.get_commit_info(commit, paths)
+            for commit_and_paths in commits_and_paths:
+                commit_id = commit_and_paths['commit_id']
+                paths = commit_and_paths['paths']
+                try:
+                    for path in paths:
+                        # dict with keys {'path', 'parent_content', 'parent_commit', 'child_content', 'child_commit'}
+                        file_datum = git_repo.get_file_before_and_after_commit(commit_id, path)
+                        file_data.append(file_datum)
+                    commit_info.append(git_repo.get_commit_info(commit_id, paths))
+                except:
+                    bad_commits.add(commit_id)
             
-            repo_data['file_data'] = file_data_by_commit_and_path
+            repo_data['file_data'] = file_data
             repo_data['commit_info'] = commit_info
+            repo_data['missing_commits'] = list(sorted(bad_commits))
+
+            if len(bad_commits) > 0:
+                print(f"{len(bad_commits)} / {len(commits_and_paths)} commits for repo {name} not found")
 
             out_dir = os.path.join(args.output_dir, "data", username)
             os.makedirs(out_dir, exist_ok=True)
@@ -128,20 +136,22 @@ class FileWorker(Worker):
             comp = zstd.ZstdCompressor(level=3, threads=4)
             with open(os.path.join(out_dir, f"{projectname}.json.zstd"), 'wb') as f:
                 writer = comp.stream_writer(f)
-                json.dump(repo_data, writer, indent=4, sort_keys=True)
+                writer.write(json.dumps(repo_data, indent=4, sort_keys=True).encode('utf-8') + b'\n')
+                writer.flush()
+                f.flush()
 
         except Exception as e:
             if not args.abort_on_errors:
                 print(e)
                 print(f"error dir: {repodir}")
+                import traceback
+                traceback.print_tb(e.__traceback__, limit=3)
+                remove_dir()
                 return (name, False, e)
             else:
+                remove_dir()
                 raise e
-        if repodir is not None:
-            try:
-                shutil.rmtree(repodir, ignore_errors=True)
-            except Exception as e:
-                print(e)
+        remove_dir()
         return (name, True, None)
 
 
@@ -160,6 +170,7 @@ def process_args():
     parser.add_argument('--approximate_max_comments', type=int)
     parser.add_argument('-v', '--verbose', help='if flag is present, print errors', action='store_true')
     parser.add_argument('--abort_on_errors', action='store_true')
+    parser.add_argument('--retry_failures', action='store_true')
     return parser.parse_args()
 
 
@@ -173,22 +184,36 @@ if __name__ == '__main__':
     if not os.path.isdir(args.output_dir):
         raise Exception("output directory {args.output_dir} does not exist; exiting")
 
-    already_processed_file = os.path.join(args.output_dir, "repos_processed.txt")
-    if os.path.exists(already_processed_file):
-        with open(already_processed_file, 'r') as f:
+    already_processed_filename = os.path.join(args.output_dir, "repos_processed.txt")
+    failure_filename = os.path.join(args.output_dir, "repos_failures.txt")
+    if os.path.exists(already_processed_filename):
+        with open(already_processed_filename, 'r') as f:
             already_processed = set(l.strip() for l in f.readlines())
     else:
         already_processed = {}
+
+    if os.path.exists(failure_filename):
+        with open(failure_filename, 'r') as f:
+            failures = set(l.strip() for l in f.readlines())
+    else:
+        failures = {}
 
     all_repo_data = []
 
     to_process = set()
 
-    for input_csv in args.input_csvs:
-        # TODO: load this up and convert the format
-        with open(input_csv, 'r') as f:
-            csv_reader = csv.DictReader(f)
-            this_repo_data = list(csv_reader)
+    # for input_csv in args.input_csvs:
+    #     # TODO: load this up and convert the format
+    #     with open(input_csv, 'r') as f:
+    #         csv_reader = csv.DictReader(f)
+    #         this_repo_data = list(csv_reader)
+
+    for _ in [None]:
+
+        this_repo_data = [{
+            'name': 'facebook/react'
+        }]
+        input_csv = ""
 
         # possibly filter out repos from the file in --already_scraped_input
         repo_data_filtered = []
@@ -202,6 +227,9 @@ if __name__ == '__main__':
             if t['name'] in already_processed: 
                 skipped['processed'] += 1
                 continue
+            if ((not args.retry_failures) and t['name'] in failures):
+                skipped['failed'] += 1
+                continue
             if t['name'] in to_process:
                 skipped['duplicate'] += 1
                 continue
@@ -212,7 +240,8 @@ if __name__ == '__main__':
         all_repo_data.extend(repo_data_filtered)
 
     print(f"{len(all_repo_data)} repos to process")
-    already_scraped_output_file = open(already_processed_file, 'a', buffering=1)
+    already_processed_file = open(already_processed_filename, 'a', buffering=1)
+    failure_file = open(failure_filename, 'a', buffering=1)
 
     print(args.output_dir)
     output_dir = args.output_dir
@@ -228,23 +257,23 @@ if __name__ == '__main__':
         in_queue, out_queue = JoinableQueue(), JoinableQueue()
         workers = []
         running_count = 0
-        
-        for i in range(num_workers):
-            worker = WorkerClass(args, i, in_queue, out_queue, **worker_kwargs)
-            worker.start()
-            running_count += 1
-            workers.append(worker)
 
         num_jobs = 0
 
-        for x in tqdm.tqdm(in_iterable, ncols=80, desc=f"{pbar_name} inputs"):
+        # for x in tqdm(in_iterable, ncols=120, desc=f"{pbar_name} inputs"):
+        for x in in_iterable:
             in_queue.put(x)
             num_jobs += 1
-        
         for _ in range(num_workers):
             in_queue.put(None)
+        
+        with tqdm(total=num_jobs, ncols=120, desc=f"{pbar_name} worker") as progress_bar:
+            for i in range(num_workers):
+                worker = WorkerClass(args, i, in_queue, out_queue, progress_bar=progress_bar, **worker_kwargs)
+                worker.start()
+                running_count += 1
+                workers.append(worker)
 
-        with tqdm.tqdm(total=num_jobs, ncols=80, desc=f"{pbar_name} worker") as progress_bar:
             while num_jobs > 0:
                 r = out_queue.get()
                 if r is None:
@@ -253,14 +282,14 @@ if __name__ == '__main__':
                     out_queue.task_done()
                     continue
                 num_jobs -= 1
-                progress_bar.update(1)
+                # progress_bar.update(1)
                 out_queue.task_done
                 yield r
 
+    os.makedirs(scratch_dir, exist_ok=True)
     os.chdir(scratch_dir)
 
     all_with_comments = pipe(all_repo_data, CommentWorker, 1, pbar_name="comments")
-
 
     results = pipe(all_with_comments, FileWorker, args.num_processes, pbar_name="files")
 
@@ -269,10 +298,13 @@ if __name__ == '__main__':
     for (repo_name, was_success, error) in results:
         if was_success:
             success_count += 1
+            already_processed_file.write(repo_name+"\n")
+        else:
+            failure_file.write(repo_name+"\n")
         total_count += 1
         
         if total_count % 10 == 0:
             print(f"successes: {success_count} / {total_count} ({success_count/total_count*100:.2f}%)")
 
-        already_scraped_output_file.write(repo_name+"\n")
-    already_scraped_output_file.close()
+    already_processed_file.close()
+    failure_file.close()

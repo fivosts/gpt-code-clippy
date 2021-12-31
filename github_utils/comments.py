@@ -1,10 +1,34 @@
 from typing import Union
+from fastcore.imports import all_equal
 
 from ghapi.core import GhApi
 from .api import try_request, paged_try_request, API_OBJECT
 from itertools import groupby
 
 from collections import defaultdict
+
+COMMENT_INDIVIDUAL_FIELDS = ['id', 'body', 'created_at', 'updated_at']
+
+COMMENT_THREAD_FIELDS = ['diff_hunk', 'path', 'position', 'original_position', 'commit_id', 'original_commit_id', 'start_line', 'original_start_line', 'start_side', 'line', 'original_line', 'side']
+
+def process_reactions(reactions):
+    reactions = dict(reactions)
+    del reactions['url']
+    for k in list(reactions.keys()):
+        if reactions[k] == 0:
+            del reactions[k]
+    return reactions
+
+def serializable_comment(comment):
+    specific_data = {
+        key: comment[key]
+        for key in COMMENT_INDIVIDUAL_FIELDS
+    }
+    common_data = {
+        key: comment[key]
+        for key in COMMENT_THREAD_FIELDS
+    }
+    return specific_data, common_data
 
 def get_review_comments(owner: str, repo: str, page_size: int=100, max_comments: Union[int, None]=None):
     current_page = 1
@@ -33,10 +57,12 @@ def get_review_comments(owner: str, repo: str, page_size: int=100, max_comments:
         current_page += 1
 
 def aggregate_comments(owner: str, repo: str, approximate_max_comments: Union[int, None]=None):
-    comments_by_pull_request_id = {}
     num_comments = 0
 
     paths_by_commit = defaultdict(set)
+
+    pull_requests_crawled = set()
+    pull_request_comment_threads = []
 
     for seed_comment in paged_try_request(
         API_OBJECT.pulls.list_review_comments_for_repo, owner=owner, repo=repo,
@@ -47,7 +73,7 @@ def aggregate_comments(owner: str, repo: str, approximate_max_comments: Union[in
         except:
             print(f"could not extract PR id from {seed_comment.pull_request_url} for comment {seed_comment.node_id}")
             continue
-        if pull_request_id in comments_by_pull_request_id:
+        if pull_request_id in pull_requests_crawled:
             continue
         all_comments_for_pr = list(paged_try_request(
             API_OBJECT.pulls.list_review_comments,
@@ -70,21 +96,39 @@ def aggregate_comments(owner: str, repo: str, approximate_max_comments: Union[in
 
         if not seed_comment_found:
             print(f"did not find comment with node id {seed_comment.node_id} in pr comments for {owner} {repo} {pull_request_id}")
-        comments_by_pull_request_id[pull_request_id] = dict(comments_by_path_and_position)
+
+        comment_threads = []
+
+        for comment_thread in comments_by_path_and_position.values():
+            this_specific, this_common = zip(*[serializable_comment(comment) for comment in comment_thread])
+            assert all(x == this_common[0] for x in this_common)
+
+            # contains metadata such as original_comment_id, path, original_position_id, comments
+            thread_info = this_common[0]
+            thread_info['comments'] = this_specific
+            comment_threads.append(thread_info)
+        
+        pull_request_comment_threads.append({
+            'pull_request_number': pull_request_id,
+            'comment_threads': comment_threads,
+        })
+        pull_requests_crawled.add(pull_request_id)
 
         # check if we've found enough comments
         num_comments += len(all_comments_for_pr)
         if approximate_max_comments is not None and num_comments >= approximate_max_comments:
             break
 
-    # convert defaultdict to dict
-    paths_by_commit = dict(paths_by_commit)
+    # convert defaultdict of sets to dict of lists
+    commits_and_paths = [{
+        'commit_id': commit,
+        'paths': list(sorted(paths))
+        }
+        for commit, paths in paths_by_commit.items()
+    ]
 
     return {
-        # Dict[pull_request_id: int, Dict[(original_commit_id: str, path: str, original_position: int), List[comment: str]]]
-        'comments': comments_by_pull_request_id,
-        # Dict[commit_id, [List[path: str]]]
-        'paths_by_commit': paths_by_commit, 
-        # int
+        'commits_and_paths': commits_and_paths, 
+        'pull_request_comment_threads': pull_request_comment_threads,
         'num_comments': num_comments,
     }
