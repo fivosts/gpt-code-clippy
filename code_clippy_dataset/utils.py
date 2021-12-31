@@ -204,3 +204,29 @@ def grouper(n, iterable):
         if not chunk:
             return
         yield chunk
+
+def split_into_chunks(l, n):
+    n = max(1, n)
+    return [l[i:i + n] for i in range(0, len(l), n)]
+
+class TimeoutError(Exception):
+    pass
+
+def timeout(func, args=(), kwargs={}, timeout_duration=150, default=None):
+    # wrap any function in this wrapper to raise a TimeoutError after timeout_duration secs
+    import signal
+
+    def handler(signum, frame):
+        raise TimeoutError()
+
+    # set the timeout handler
+    signal.signal(signal.SIGALRM, handler)
+    signal.alarm(timeout_duration)
+    try:
+        result = func(*args, **kwargs)
+    except TimeoutError:
+        result = default
+    finally:
+        signal.alarm(0)
+
+    return result

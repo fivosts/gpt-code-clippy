@@ -61,7 +61,7 @@ def aggregate_comments(owner: str, repo: str, approximate_max_comments: Union[in
         comments_by_path_and_position = defaultdict(list)
         seed_comment_found = False
         for comment in all_comments_for_pr:
-            comments_by_path_and_position[(comment.path, comment.original_position)].append(comment)
+            comments_by_path_and_position[(comment.original_commit_id, comment.path, comment.original_position)].append(comment)
             if comment.node_id == seed_comment.node_id:
                 seed_comment_found = True
 
@@ -81,7 +81,10 @@ def aggregate_comments(owner: str, repo: str, approximate_max_comments: Union[in
     paths_by_commit = dict(paths_by_commit)
 
     return {
+        # Dict[pull_request_id: int, Dict[(original_commit_id: str, path: str, original_position: int), List[comment: str]]]
         'comments': comments_by_pull_request_id,
+        # Dict[commit_id, [List[path: str]]]
         'paths_by_commit': paths_by_commit, 
+        # int
         'num_comments': num_comments,
     }

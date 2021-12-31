@@ -18,6 +18,8 @@ import subprocess
 import functools
 
 from hacky_linguist import LANGUAGE_EXTENSIONS
+from github_utils.utils import get_git_commits, get_git_date, 
+from code_clippy_dataset.utils import split_into_chunks, timeout, TimeoutError
 
 MAX_TEXT_SIZE = 10_000_000
 
@@ -51,52 +53,9 @@ LICENSE_STANDARDIZATION = {
 
 MIME = magic.Magic(mime=True)
 
-def get_output(command, cwd):
-    return subprocess.run(command, shell=True, cwd=cwd, stdout=subprocess.PIPE).stdout.decode("utf-8")
-
-def get_git_commits(repodir):
-    lines = get_output(
-        "git log --pretty=oneline", cwd=repodir,
-    ).splitlines()
-    hashes = [line.split()[0] for line in lines]
-    return hashes
-
-def get_git_date(repodir, commit=None):
-    command = 'git show -s --format="%ci"'
-    if commit:
-        command += f" {commit}"
-    line = get_output(command, repodir)
-    return line.strip()
-
-class TimeoutError(Exception):
-    pass
-
-def timeout(func, args=(), kwargs={}, timeout_duration=150, default=None):
-    # wrap any function in this wrapper to raise a TimeoutError after timeout_duration secs
-    import signal
-
-    def handler(signum, frame):
-        raise TimeoutError()
-
-    # set the timeout handler
-    signal.signal(signal.SIGALRM, handler)
-    signal.alarm(timeout_duration)
-    try:
-        result = func(*args, **kwargs)
-    except TimeoutError:
-        result = default
-    finally:
-        signal.alarm(0)
-
-    return result
-
-def split_into_chunks(l, n):
-    n = max(1, n)
-    return [l[i:i + n] for i in range(0, len(l), n)]
-
 
 def filter_by_stars(repo_data, n_stars):
-    return [record for record in repo_data if int(repo['stargazers']) >= n_stars]
+    return [record for record in repo_data if int(record['stargazers']) >= n_stars]
 
 
 def get_content(f):
@@ -464,7 +423,7 @@ if __name__ == '__main__':
 
     print(args.output_dir)
 
-    data_dir = os.path.join(output_dir, 'data')
+    data_dir = os.path.join(args.output_dir, 'data')
     os.makedirs(data_dir, exist_ok=True)
 
     # filter by number of stars
@@ -528,7 +487,7 @@ if __name__ == '__main__':
                 none += 1
 
         # remove any leftover files
-        subprocess.Popen("rm -rfv .tmp && mkdir .tmp", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+        subprocess.Popen("rm -rfv .tmp && mkdir .tmp", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT, cwd=scratch_dir)
         if count % args.commit_freq == 0:
             ar.commit()
             for name in processed_names:
