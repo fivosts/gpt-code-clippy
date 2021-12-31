@@ -7,7 +7,7 @@ from itertools import groupby
 
 from collections import defaultdict
 
-COMMENT_INDIVIDUAL_FIELDS = ['id', 'body', 'created_at', 'updated_at']
+COMMENT_INDIVIDUAL_FIELDS = ['id', 'body', 'created_at', 'updated_at', 'html_url']
 
 COMMENT_THREAD_FIELDS = ['diff_hunk', 'path', 'position', 'original_position', 'commit_id', 'original_commit_id', 'start_line', 'original_start_line', 'start_side', 'line', 'original_line', 'side']
 

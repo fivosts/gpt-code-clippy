@@ -1,4 +1,5 @@
 import os
+import csv
 import random
 import shutil
 import json
@@ -202,18 +203,10 @@ if __name__ == '__main__':
 
     to_process = set()
 
-    # for input_csv in args.input_csvs:
-    #     # TODO: load this up and convert the format
-    #     with open(input_csv, 'r') as f:
-    #         csv_reader = csv.DictReader(f)
-    #         this_repo_data = list(csv_reader)
-
-    for _ in [None]:
-
-        this_repo_data = [{
-            'name': 'facebook/react'
-        }]
-        input_csv = ""
+    for input_csv in args.input_csvs:
+        with open(input_csv, 'r') as f:
+            csv_reader = csv.DictReader(f)
+            this_repo_data = list(csv_reader)
 
         # possibly filter out repos from the file in --already_scraped_input
         repo_data_filtered = []
@@ -249,9 +242,9 @@ if __name__ == '__main__':
     data_dir = os.path.join(output_dir, 'data')
     os.makedirs(data_dir, exist_ok=True)
 
-    all_repo_data.sort(key=lambda t: t['name'])
-    random.seed(1)
-    random.shuffle(all_repo_data)
+    # all_repo_data.sort(key=lambda t: t['name'])
+    # random.seed(1)
+    # random.shuffle(all_repo_data)
 
     def pipe(in_iterable, WorkerClass, num_workers, pbar_name=None, **worker_kwargs):
         in_queue, out_queue = JoinableQueue(), JoinableQueue()
