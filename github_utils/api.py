@@ -17,7 +17,11 @@ MAX_REQUESTS = 5000 if API_KEY is not None else 1000
 
 api_requests = 0
 
-def try_request(api_function, *args, max_retries=10, sleep_time_seconds=60*60, **kwargs):
+DEFAULT_SLEEP_TIME_MINUTES = 5
+
+DEFAULT_MAX_RETRIES = 20
+
+def try_request(api_function, *args, max_retries=DEFAULT_MAX_RETRIES, sleep_time_seconds=60*DEFAULT_SLEEP_TIME_MINUTES, **kwargs):
     global api_requests
 
     retries = 0
@@ -41,7 +45,7 @@ def try_request(api_function, *args, max_retries=10, sleep_time_seconds=60*60, *
     return None
 
 
-def paged_try_request(api_function, *args, page_size=100, max_items=None, max_retries=10, sleep_time_seconds=60*60, **kwargs):
+def paged_try_request(api_function, *args, page_size=100, max_items=None, max_retries=DEFAULT_MAX_RETRIES, sleep_time_seconds=60*DEFAULT_SLEEP_TIME_MINUTES, **kwargs):
     """
     api_function: (*args, **kwargs) -> Union[List[item], None], e.g. api.pulls.list_review_comments
     """
