@@ -99,9 +99,11 @@ def aggregate_comments(owner: str, repo: str, approximate_max_comments: Union[in
 
         comment_threads = []
 
-        for comment_thread in comments_by_path_and_position.values():
+        for tpl, comment_thread in comments_by_path_and_position.items():
             this_specific, this_common = zip(*[serializable_comment(comment) for comment in comment_thread])
-            assert all(x == this_common[0] for x in this_common)
+            if not all(x == this_common[0] for x in this_common):
+                print(f"not all comment details match for {owner} {repo} {tpl}")
+                continue
 
             # contains metadata such as original_comment_id, path, original_position_id, comments
             thread_info = this_common[0]

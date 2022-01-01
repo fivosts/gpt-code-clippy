@@ -4,7 +4,8 @@ import random
 import shutil
 import json
 from collections import Counter
-from multiprocessing import Process, JoinableQueue
+from multiprocessing import JoinableQueue
+from threading import Thread
 from tqdm import tqdm
 import argparse
 import subprocess
@@ -13,7 +14,7 @@ import zstandard as zstd
 from github_utils.utils import GitRepo
 from github_utils.comments import aggregate_comments
 
-class Worker(Process):
+class Worker(Thread):
     def __init__(self, args, index, input_queue, output_queue,
                  progress_bar=None, **kwargs):
         super().__init__(**kwargs)
@@ -38,7 +39,7 @@ class Worker(Process):
 
             result = self.compute_result(input)
 
-            if self.progress_bar is not None:
+            if self.progress_bar is not None and input is not None:
                 with self.progress_bar.get_lock():
                     self.progress_bar.update(1)
 
@@ -128,8 +129,8 @@ class FileWorker(Worker):
             repo_data['commit_info'] = commit_info
             repo_data['missing_commits'] = list(sorted(bad_commits))
 
-            if len(bad_commits) > 0:
-                print(f"{len(bad_commits)} / {len(commits_and_paths)} commits for repo {name} not found")
+            # if len(bad_commits) > 0:
+            #     print(f"{len(bad_commits)} / {len(commits_and_paths)} commits for repo {name} not found")
 
             out_dir = os.path.join(args.output_dir, "data", username)
             os.makedirs(out_dir, exist_ok=True)
@@ -161,7 +162,7 @@ def process_args():
     parser.add_argument('output_dir')
     parser.add_argument('--scratch_dir', default="/scratch/dpf/code-crawl-scratch")
     parser.add_argument('--input_csvs', nargs="+", required=True)
-    parser.add_argument('--num_processes', help='number of processes', default=10, type=int)
+    parser.add_argument('--num_threads', help='number of processes', default=10, type=int)
     parser.add_argument('--clone_timeout', help='timeout for git clone command in seconds',
                         default=480,
                         type=int)
@@ -242,58 +243,65 @@ if __name__ == '__main__':
     data_dir = os.path.join(output_dir, 'data')
     os.makedirs(data_dir, exist_ok=True)
 
-    # all_repo_data.sort(key=lambda t: t['name'])
-    # random.seed(1)
-    # random.shuffle(all_repo_data)
+    all_repo_data.sort(key=lambda t: t['name'])
+    random.seed(1)
+    random.shuffle(all_repo_data)
 
-    def pipe(in_iterable, WorkerClass, num_workers, pbar_name=None, **worker_kwargs):
-        in_queue, out_queue = JoinableQueue(), JoinableQueue()
-        workers = []
-        running_count = 0
+    class Pipe:
+        def __init__(self, WorkerClass, num_workers, in_queue=None, out_queue=None, **worker_kwargs):
+            if in_queue is None:
+                in_queue = JoinableQueue()
+            if out_queue is None:
+                out_queue = JoinableQueue()
+            self.in_queue, self.out_queue = in_queue, out_queue
+            self.workers = []
+            self.num_workers = num_workers
+            self.WorkerClass = WorkerClass
+            self.worker_kwargs = worker_kwargs
 
-        num_jobs = 0
-
-        # for x in tqdm(in_iterable, ncols=120, desc=f"{pbar_name} inputs"):
-        for x in in_iterable:
-            in_queue.put(x)
-            num_jobs += 1
-        for _ in range(num_workers):
-            in_queue.put(None)
-        
-        with tqdm(total=num_jobs, ncols=120, desc=f"{pbar_name} worker") as progress_bar:
-            for i in range(num_workers):
-                worker = WorkerClass(args, i, in_queue, out_queue, progress_bar=progress_bar, **worker_kwargs)
+        def start(self, pbar_total=None, pbar_name='', pbar_position=None):
+            progress_bar = tqdm(total=pbar_total, ncols=120, desc=f"{pbar_name} worker", position=pbar_position)
+            for i in range(self.num_workers):
+                worker = self.WorkerClass(args, i, self.in_queue, self.out_queue, progress_bar=progress_bar, **self.worker_kwargs)
                 worker.start()
-                running_count += 1
-                workers.append(worker)
+                self.workers.append(worker)
 
-            while num_jobs > 0:
-                r = out_queue.get()
-                if r is None:
-                    running_count -= 1
-                    #print(f"running count: {running_count}")
-                    out_queue.task_done()
-                    continue
-                num_jobs -= 1
-                # progress_bar.update(1)
-                out_queue.task_done
-                yield r
 
     os.makedirs(scratch_dir, exist_ok=True)
     os.chdir(scratch_dir)
 
-    all_with_comments = pipe(all_repo_data, CommentWorker, 1, pbar_name="comments")
+    comment_pipe = Pipe(CommentWorker, args.num_threads)
+    file_pipe = Pipe(FileWorker, args.num_threads, in_queue=comment_pipe.out_queue)
 
-    results = pipe(all_with_comments, FileWorker, args.num_processes, pbar_name="files")
+    num_jobs = len(all_repo_data)
+
+    for repo_data in all_repo_data:
+        comment_pipe.in_queue.put(repo_data)
+    for _ in range(args.num_threads):
+        comment_pipe.in_queue.put(None)
+
+    comment_pipe.start(pbar_name="comments", pbar_position=0, pbar_total=num_jobs)
+    file_pipe.start(pbar_name="files", pbar_position=1, pbar_total=num_jobs)
 
     success_count = 0
     total_count = 0
-    for (repo_name, was_success, error) in results:
+    while num_jobs > 0:
+        r = file_pipe.out_queue.get()
+        file_pipe.out_queue.task_done()
+        if r is None:
+            #print(f"running count: {running_count}")
+            continue
+        num_jobs -= 1
+        # progress_bar.update(1)
+        repo_name, was_success, error = r
+
         if was_success:
             success_count += 1
             already_processed_file.write(repo_name+"\n")
+            already_processed_file.flush()
         else:
             failure_file.write(repo_name+"\n")
+            failure_file.flush()
         total_count += 1
         
         if total_count % 10 == 0:
