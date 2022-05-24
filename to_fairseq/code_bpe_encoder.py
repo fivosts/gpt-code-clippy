@@ -73,7 +73,7 @@ def main():
         help='use huggingface tokenizer. faster than python implementation'
     )
     parser.add_argument(
-        "--input-dirs",
+        "--input-datasets",
         required=True,
         nargs="+",
         help="paths to directories containing serialized HF datasets",
@@ -85,7 +85,7 @@ def main():
     )
     parser.add_argument(
         '--splits-dir',
-         required=True,
+        #  required=True,
         help="path to directory containing 'train' and 'val' files with list of project names (lowercased repo names with username removed) to use in each split"
     )
 
@@ -116,14 +116,14 @@ def main():
     parser.add_argument("--workers", type=int, default=20)
     args = parser.parse_args()
 
-    def read_project_names(split):
-        with open(os.path.join(args.splits_dir, split), 'r') as f:
-            return set(l.strip().lower() for l in f.readlines())
+    # def read_project_names(split):
+    #     with open(os.path.join(args.splits_dir, split), 'r') as f:
+    #         return set(l.strip().lower() for l in f.readlines())
 
-    train_project_names = read_project_names('train')
-    val_project_names = read_project_names('val')
+    # train_project_names = read_project_names('train')
+    # val_project_names = read_project_names('val')
 
-    encoder = MultiprocessingEncoder(args, train_project_names, val_project_names)
+    encoder = MultiprocessingEncoder(args)
 
     os.makedirs(os.path.join(args.output_dir, 'bpe'), exist_ok=True)
     os.makedirs(os.path.join(args.output_dir, 'raw'), exist_ok=True)
@@ -138,25 +138,27 @@ def main():
                     f.write('\n\n')
         return shard_num + 1
 
-    for input_dir in args.input_dirs:
-        data = datasets.load_from_disk(input_dir)
+    for input_dataset in args.input_datasets:
+        print(input_dataset)
+        # data = datasets.load_from_disk(input_dir)
+        data = datasets.load_dataset("json", data_files = input_dataset)['train']
 
-        encoder.dataset_dir = input_dir
+        encoder.dataset_dir = input_dataset # OK
 
-        dataset_name = '_'.join(input_dir.rstrip('/').split('/')[-3:-1])
-        print(f'{dataset_name}\t({len(data):_}): \t {input_dir}')
+        dataset_name = "OpenCL"
+        print(f'{dataset_name}\t({len(data):_}): \t {input_dataset}')
 
-        data = data.add_column('dataset_dir', np.full(len(data), input_dir))
+        data = data.add_column('dataset_dir', np.full(len(data), input_dataset))
         data_augmented = data.map(encoder.process, num_proc=args.workers)
 
         train_data = data_augmented.filter(lambda record: record['split'] == 'train', num_proc=args.workers)
-        val_data = data_augmented.filter(lambda record: record['split'] == 'val', num_proc=args.workers)
+        # val_data = data_augmented.filter(lambda record: record['split'] == 'val', num_proc=args.workers)
 
         print(f"{dataset_name}: filtered")
         train_raw_shards = save_to_shards(train_data['augmented_text'], dataset_name, 'train', 'raw')
         print(f"{dataset_name}: saved train-raw in {train_raw_shards} shards")
-        val_raw_shards = save_to_shards(val_data['augmented_text'], dataset_name, 'val', 'raw')
-        print(f"{dataset_name}: saved val-raw in {val_raw_shards} shards")
+        # val_raw_shards = save_to_shards(val_data['augmented_text'], dataset_name, 'val', 'raw')
+        # print(f"{dataset_name}: saved val-raw in {val_raw_shards} shards")
 
         pool = Pool(args.workers, initializer=encoder.initializer)
 
@@ -164,9 +166,9 @@ def main():
         train_bpe_shards = save_to_shards(train_tokenized, dataset_name, 'train', 'bpe')
         print(f"{dataset_name}: saved train-bpe in {train_bpe_shards} shards")
 
-        val_tokenized = tqdm.tqdm(pool.imap(encoder.tokenize, val_data['augmented_text'], 100), total=len(val_data))
-        val_bpe_shards = save_to_shards(val_tokenized, dataset_name, 'val', 'bpe')
-        print(f"{dataset_name}: saved val-bpe in {val_bpe_shards} shards")
+        # val_tokenized = tqdm.tqdm(pool.imap(encoder.tokenize, val_data['augmented_text'], 100), total=len(val_data))
+        # val_bpe_shards = save_to_shards(val_tokenized, dataset_name, 'val', 'bpe')
+        # print(f"{dataset_name}: saved val-bpe in {val_bpe_shards} shards")
 
 def redact_pii(text):
     #text = EMAIL_RE.sub("removed@example.com", text)
@@ -209,18 +211,19 @@ def make_tagged(tag, inner, attributes={}, insert_newlines=True, attribute_move_
 
 class MultiprocessingEncoder(object):
 
-    def __init__(self, args, train_project_names, val_project_names):
+    def __init__(self, args):
         self.args = args
         # self.bpes = [self._make_bpe() for _ in range(self.args.workers)]
-        self.train_project_names = train_project_names
-        self.val_project_names = val_project_names
+        # self.train_project_names = train_project_names
+        # self.val_project_names = val_project_names
 
     def _make_bpe(self):
         if self.args.use_hf_tokenizer:
             from tokenizers import ByteLevelBPETokenizer
             bpe = ByteLevelBPETokenizer.from_file(
-                self.args.vocab_file, self.args.merge_file,
-                pretokenizer_split_newlines_only=self.args.pretokenizer_split_newlines_only,
+                vocab_filename = self.args.vocab_file,
+                merges_filename = self.args.merge_file,
+                # pretokenizer_split_newlines_only=self.args.pretokenizer_split_newlines_only,
                 )
         else:
             pretokenizer_split = "newlines_only" if self.args.pretokenizer_split_newlines_only else "default"
@@ -230,12 +233,14 @@ class MultiprocessingEncoder(object):
     def process(self, example):
         args = self.args
         dataset_dir = example['dataset_dir']
-        source = infer_source_from_data_dir(dataset_dir)
-        if source == 'bigquery':
-            standardized_source = 'github'
-        else:
-            standardized_source = source
-        setlanguage = infer_setlanguage_from_data_dir(dataset_dir)
+        # source = infer_source_from_data_dir(dataset_dir)
+        # if source == 'bigquery':
+        standardized_source = 'github'
+        source = "github"
+        # else:
+        #     standardized_source = source
+        # setlanguage = infer_setlanguage_from_data_dir(dataset_dir)
+        setlanguage = "OpenCL"
 
         ts = example['repo_name'].lower().split('/')
         if len(ts) != 2:
@@ -243,12 +248,13 @@ class MultiprocessingEncoder(object):
         else:
             project_name = ts[-1]
 
-        if project_name in self.train_project_names:
-            split = 'train'
-        elif project_name in self.val_project_names:
-            split = 'val'
-        else:
-            raise ValueError(f"project_name {project_name} not found in train or val list!")
+        split = 'train'
+        # if project_name in self.train_project_names:
+        #     split = 'train'
+        # elif project_name in self.val_project_names:
+        #     split = 'val'
+        # else:
+        #     raise ValueError(f"project_name {project_name} not found in train or val list!")
 
         attributes = {}
         if 'source' in args.metadata:
