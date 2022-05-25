@@ -223,7 +223,7 @@ class MultiprocessingEncoder(object):
             bpe = ByteLevelBPETokenizer.from_file(
                 vocab_filename = self.args.vocab_file,
                 merges_filename = self.args.merge_file,
-                # pretokenizer_split_newlines_only=self.args.pretokenizer_split_newlines_only,
+                pretokenizer_split_newlines_only=self.args.pretokenizer_split_newlines_only,
                 )
         else:
             pretokenizer_split = "newlines_only" if self.args.pretokenizer_split_newlines_only else "default"
